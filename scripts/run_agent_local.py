@@ -106,7 +106,6 @@ def format_answer(state):
 
     row = raw[0]
 
-    # Cas 2 colonnes (date + valeur)
     if len(row) == 2:
         d, value = row
 
@@ -120,7 +119,6 @@ def format_answer(state):
             "answer": f"📅 {d}\n💰 Valeur : {value:.2f}"
         }
 
-    # Cas OHLCV complet (7 colonnes)
     if len(row) == 7:
         (
             d,
@@ -147,7 +145,6 @@ def format_answer(state):
 """.strip()
         }
 
-    # Cas multi-lignes (plage)
     if len(raw) > 1:
         return {
             "answer": f"Requête retournée {len(raw)} lignes. Exemple première ligne: {row}"
@@ -158,14 +155,11 @@ def format_answer(state):
 def resolve_symbol(state):
     question = state["input"].upper()
 
-    # 1) Heuristique: ticker en majuscules (NVDA, AAPL, SPY, QQQ, BTC-USD)
     m = re.search(r"\b[A-Z]{1,5}(?:-[A-Z]{2,5})?\b", question)
     if m:
         sym = m.group(0)
         return {"symbol": sym}
 
-    # 2) fallback: cherche dans dim_tickers par nom (Apple, Nvidia, Bitcoin...)
-    # (On reste safe: query paramétrée)
     q = state["input"].strip()
     sql = """
     SELECT symbol
@@ -173,7 +167,7 @@ def resolve_symbol(state):
     WHERE LOWER(name) LIKE LOWER(:q)
     LIMIT 1
     """
-    res = db.run(sql, {"q": f"%{q}%"})  # si ton db.run ne supporte pas params, je te donne alternative
+    res = db.run(sql, {"q": f"%{q}%"})
     if res:
         return {"symbol": res[0][0]}
 

@@ -1,3 +1,5 @@
+name: alphaops_ai
+
 services:
   postgres_data:
     image: postgres:15
@@ -11,7 +13,7 @@ services:
       - "5433:5432"
     volumes:
       - pgdata_financial:/var/lib/postgresql/data
-      - ./init-db:/docker-entrypoint-initdb.d:ro
+      - ./data/schema:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${PGUSER}", "-d", "${PGDATABASE}"]
       interval: 5s
@@ -35,10 +37,12 @@ services:
       retries: 10
 
   airflow_init:
-    image: apache/airflow:2.9.3
+    build: .
     container_name: airflow_init
     depends_on:
       postgres_airflow:
+        condition: service_healthy
+      postgres_data:
         condition: service_healthy
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -51,16 +55,19 @@ services:
       PGUSER: ${PGUSER}
       PGPASSWORD: ${PGPASSWORD}
     volumes:
-      - ./:/opt/airflow
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
     command: >
       bash -c "
-      pip install -r /opt/airflow/requirements.txt &&
       airflow db init &&
       airflow users create --username admin --password admin --firstname admin --lastname admin --role Admin --email admin@local || true
       "
 
   airflow_webserver:
-    image: apache/airflow:2.9.3
+    build: .
     container_name: airflow_webserver
     restart: unless-stopped
     depends_on:
@@ -78,17 +85,20 @@ services:
       PGUSER: ${PGUSER}
       PGPASSWORD: ${PGPASSWORD}
     volumes:
-      - ./:/opt/airflow
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
     ports:
       - "8081:8080"
     command: >
       bash -c "
-      pip install -r /opt/airflow/requirements.txt &&
       airflow webserver
       "
 
   airflow_scheduler:
-    image: apache/airflow:2.9.3
+    build: .
     container_name: airflow_scheduler
     restart: unless-stopped
     depends_on:
@@ -106,10 +116,13 @@ services:
       PGUSER: ${PGUSER}
       PGPASSWORD: ${PGPASSWORD}
     volumes:
-      - ./:/opt/airflow
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
     command: >
       bash -c "
-      pip install -r /opt/airflow/requirements.txt &&
       airflow scheduler
       "
 

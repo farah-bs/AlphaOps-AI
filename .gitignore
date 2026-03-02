@@ -1,22 +1,78 @@
-# Environnements
+########################################
+# ENVIRONMENTS
+########################################
 .env
 .env.*
 !.env.example
 
-# Python
+########################################
+# PYTHON
+########################################
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+
 .venv/
 venv/
+env/
 
-# Airflow
+########################################
+# AIRFLOW
+########################################
+airflow/logs/
 logs/
 airflow-webserver.pid
 airflow.cfg
+*.db
 
+########################################
+# DOCKER
+########################################
+docker-compose.override.yml
+*.log
+*.pid
+
+########################################
+# POSTGRES / DATA
+########################################
+pgdata_*/
+*.dump
+
+########################################
+# ML ARTIFACTS
+########################################
+artifacts/*.pickle
+artifacts/*.pkl
+artifacts/*.joblib
+artifacts/*.onnx
+
+########################################
+# DATA FILES (si CSV temporaires)
+########################################
+data/raw/
+data/processed/*.csv
+data/processed/*.parquet
+
+########################################
+# IDE
+########################################
+.vscode/
+.idea/
+
+########################################
 # OS
+########################################
 .DS_Store
+Thumbs.db
 
-# Claude
+########################################
+# CLAUDE / LLM LOGS
+########################################
 claude_logs/
 CLAUDE.md
