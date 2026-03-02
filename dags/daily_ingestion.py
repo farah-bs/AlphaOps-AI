@@ -3,7 +3,7 @@ from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import sys
 
-sys.path.append('./opt/airflow')
+sys.path.append('/opt/airflow')
 from data.fetch_live_stocks import run_daily_batch
 
 default_args = {
@@ -25,7 +25,7 @@ with DAG(
 ) as dag:
     
     ingest_task = PythonOperator(
-        task_id='run_daily_batch',
+        task_id='ingest_incremental',
         python_callable=run_daily_batch
     )
 

@@ -45,8 +45,6 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_PGUSER}:${AIRFLOW_PGPASSWORD}@postgres_airflow:5432/${AIRFLOW_PGDATABASE}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       PYTHONPATH: /opt/airflow
-
-      # Connexion à la DB métier (utilisée par ton batch)
       PGHOST: ${PGHOST}
       PGPORT: ${PGPORT}
       PGDATABASE: ${PGDATABASE}
