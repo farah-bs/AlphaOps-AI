@@ -36,8 +36,32 @@ class SQLValidator:
                 return {"is_valid": False, "reason": "Seulement SELECT autorisé (WITH...SELECT ok)."}
             
             # 2) tables autorisées
+            cte_names = set()
+
+            # Trouver le nœud WITH, peu importe que parsed soit Select/With/Statement
+            with_node = next(parsed.find_all(exp.With), None)
+            if with_node:
+                # with_node.expressions contient les CTE
+                for cte in with_node.expressions:
+                    # cte est souvent un exp.CTE
+                    # alias_or_name marche bien pour récupérer le nom du CTE
+                    cte_names.add(cte.alias_or_name)
+
             tables = list(parsed.find_all(exp.Table))
-            invalid = [t.name for t in tables if t.name not in self.allowed_tables]
+
+            print("CTE NAMES:", cte_names)
+            print("TABLES FOUND:", [t.name for t in tables])
+
+            invalid = []
+            for t in tables:
+                name = t.name
+                # si c'est un CTE, OK
+                if name in cte_names:
+                    continue
+                # sinon whitelist stricte
+                if name not in self.allowed_tables:
+                    invalid.append(name)
+
             if invalid:
                 return {"is_valid": False, "reason": f"Tables interdites: {invalid}"}
 
