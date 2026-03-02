@@ -15,13 +15,10 @@ class SQLValidator:
         self.require_limit_on_fact = require_limit_on_fact
 
     def _is_select_like(self, parsed) -> bool:
-        # SELECT ...
         if isinstance(parsed, exp.Select):
             return True
-        # WITH ... SELECT ...
         if isinstance(parsed, exp.With):
             return isinstance(parsed.this, exp.Select)
-        # Parfois parse_one renvoie Statement -> .this
         if hasattr(parsed, "this"):
             return self._is_select_like(parsed.this)
         return False
@@ -31,20 +28,14 @@ class SQLValidator:
             q = query.strip()
             parsed = parse_one(q, dialect="postgres")
 
-            # 1) uniquement SELECT / WITH..SELECT
             if not self._is_select_like(parsed):
                 return {"is_valid": False, "reason": "Seulement SELECT autorisé (WITH...SELECT ok)."}
             
-            # 2) tables autorisées
             cte_names = set()
 
-            # Trouver le nœud WITH, peu importe que parsed soit Select/With/Statement
             with_node = next(parsed.find_all(exp.With), None)
             if with_node:
-                # with_node.expressions contient les CTE
                 for cte in with_node.expressions:
-                    # cte est souvent un exp.CTE
-                    # alias_or_name marche bien pour récupérer le nom du CTE
                     cte_names.add(cte.alias_or_name)
 
             tables = list(parsed.find_all(exp.Table))
@@ -55,26 +46,21 @@ class SQLValidator:
             invalid = []
             for t in tables:
                 name = t.name
-                # si c'est un CTE, OK
                 if name in cte_names:
                     continue
-                # sinon whitelist stricte
                 if name not in self.allowed_tables:
                     invalid.append(name)
 
             if invalid:
                 return {"is_valid": False, "reason": f"Tables interdites: {invalid}"}
 
-            # 3) patterns dangereux (en upper)
             upper = q.upper()
             dangerous = [";--", "/*", "*/", "UNION", "PG_SLEEP", "DROP", "ALTER", "TRUNCATE", "INSERT", "UPDATE", "DELETE"]
             if any(pat in upper for pat in dangerous):
                 return {"is_valid": False, "reason": "Pattern potentiellement dangereux détecté."}
 
-            # 4) limiter les dumps sur fact_ohlcv
             uses_fact = any(t.name == "fact_ohlcv" for t in tables)
 
-            # LIMIT check
             limit_exp = parsed.args.get("limit")
             if limit_exp is not None:
                 lit = limit_exp.this
@@ -88,7 +74,6 @@ class SQLValidator:
                 if uses_fact and self.require_limit_on_fact:
                     return {"is_valid": False, "reason": f"Requête sur fact_ohlcv sans LIMIT (ajoute LIMIT <= {self.max_limit})."}
 
-            # * check (éviter SELECT * sur fact)
             has_star = any(isinstance(x, exp.Star) for x in parsed.find_all(exp.Star))
             if uses_fact and has_star:
                 return {"is_valid": False, "reason": "SELECT * interdit sur fact_ohlcv (sélectionne les colonnes nécessaires)."}

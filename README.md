@@ -8,12 +8,12 @@ improve a machine learning system in a real-world financial context.
 
 ## Architecture Overview
 
-### 1️⃣ Data Engineering Layer
+### 1️⃣ Data Engineering Layer (✔️ Done)
 - Daily stock ingestion via yfinance
 - PostgreSQL Star Schema (DimTickers, DimTime, FactOHLCV)
 - Batch orchestration with Apache Airflow
 
-### 2️⃣ LLM SQL Agent
+### 2️⃣ LLM SQL Agent (✔️ Done)
 - LangChain + Mistral Codestral
 - Natural language → validated SQL (SELECT-only)
 - Schema-grounded RAG

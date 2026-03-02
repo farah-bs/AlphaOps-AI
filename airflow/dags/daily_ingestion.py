@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import sys
 
 sys.path.append('/opt/airflow')
-from data.fetch_live_stocks import run_daily_batch
+from data.ingestion.fetch_live_stocks import run_daily_batch
 
 default_args = {
     'owner': 'adam',
