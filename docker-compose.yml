@@ -126,6 +126,26 @@ services:
       airflow scheduler
       "
 
+  streamlit:
+    image: python:3.11-slim
+    container_name: webapp
+    working_dir: /app
+    depends_on:
+      postgres_data:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./webapp:/app
+      - ./src:/app/src
+    command: >
+      bash -c "
+      pip install --no-cache-dir -r requirements.txt &&
+      streamlit run app.py --server.port 8501 --server.address=0.0.0.0
+      "
+
 volumes:
   pgdata_financial:
   pgdata_airflow:

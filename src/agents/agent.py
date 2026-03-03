@@ -5,18 +5,18 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated
 import operator
-from sql_validator import SQLValidator
+from src.validators.sql_validator import SQLValidator
 import os
 from dotenv import load_dotenv
 import re
 from decimal import Decimal
 from datetime import date
+from src.db.connection import get_engine
 
 load_dotenv()
-print("MISTRAL_API_KEY loaded?", bool(os.getenv("MISTRAL_API_KEY")))
 
-db = SQLDatabase.from_uri("postgresql+psycopg2://nl2sql_user:machinelearning@localhost:5432/nl2sql_db")
-
+engine = get_engine()
+db = SQLDatabase(engine)
 llm = ChatMistralAI(model="codestral-latest", api_key=os.getenv("MISTRAL_API_KEY"), temperature=0.1)
 
 class AgentState(TypedDict):
@@ -194,6 +194,18 @@ workflow.add_edge("execute_sql", END)
 
 
 app = workflow.compile()
+
+def ask_agent(question: str):
+    """
+    Retourne un dict contenant au minimum:
+    - sql_query
+    - result (raw)
+    - answer (formatée)
+    - validation
+    """
+    out = app.invoke({"input": question})
+
+    return out
 
 result = app.invoke({"input": "Prix NVDA hier ?"})
 print("SQL généré:", result.get("sql_query", "No SQL"))
