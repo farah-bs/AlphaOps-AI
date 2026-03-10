@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 prophet
-pandas
+pandas==3.0.1
 pydantic
 scikit-learn
 ta

@@ -1,0 +1,21 @@
+services:
+  webapp:
+    build:
+      context: ..
+      dockerfile: webapp/Dockerfile
+    ports:
+      - "8502:8501"
+    env_file:
+      - ../.env
+    environment:
+      - PGHOST=postgres_data
+      - PGPORT=5432
+    networks:
+      - prod_net
+      - alphaops_ai_default
+
+networks:
+  prod_net:
+    external: true
+  alphaops_ai_default:
+    external: true
