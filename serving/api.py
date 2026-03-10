@@ -70,9 +70,12 @@ def predict(req: PredictRequest):
     if model is None:
         raise HTTPException(status_code=404, detail=f"Aucun modèle pour {ticker}")
 
-    # Nombre de jours business à générer depuis train_end jusqu'à aujourd'hui + horizon
+    # Vraie dernière date du modèle (fenêtres non-overlapping peuvent s'arrêter
+    # avant TRAIN_END si le reste < window est ignoré)
     today          = pd.Timestamp.today().normalize()
-    days_to_extend = max((today - TRAIN_END).days + horizon, horizon)
+    last_train_dt  = pd.Timestamp(model.history_dates.max()).normalize()
+    business_days  = len(pd.bdate_range(last_train_dt + pd.Timedelta(days=1), today))
+    days_to_extend = max(business_days + horizon, horizon)
 
     future   = model.make_future_dataframe(periods=days_to_extend, freq="B")
     forecast = model.predict(future)
