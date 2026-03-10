@@ -1,8 +1,10 @@
-python-dotenv
-psycopg2-binary
-sqlalchemy
+fastapi
+uvicorn
+prophet
 pandas
-numpy
-kagglehub
-yfinance
-sqlglot
+pydantic
+scikit-learn
+ta
+sqlalchemy
+psycopg2-binary
+python-dotenv
