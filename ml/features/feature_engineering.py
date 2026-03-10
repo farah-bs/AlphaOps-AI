@@ -130,44 +130,26 @@ def get_last_sequence(ticker: str, seq_len: int, scaler: StandardScaler) -> np.n
     return scaled[np.newaxis, :, :].astype(np.float32)  # (1, seq_len, n_features)
 
 
-def prepare_prophet_df(
-    ticker: str,
-    window: int,
-    price_stats: dict,
-    all_tickers: list,
-) -> pd.DataFrame:
+def prepare_prophet_df(ticker: str, window: int) -> pd.DataFrame:
     """
-    Retourne un DataFrame Prophet-ready pour l'inférence :
-      - les `window` derniers jours de close price normalisés (z-score)
-      - colonnes one-hot pour chaque ticker
+    Retourne les `window` derniers jours du ticker au format Prophet (ds, y)
+    avec les vraies dates et les prix bruts (adj_close).
+    Utilisé par l'API de serving pour l'inférence.
 
     Args:
-        ticker      : ticker cible (ex: "AAPL")
-        window      : nombre de jours en entrée (60 pour daily, 180 pour monthly)
-        price_stats : dict {ticker: (mean, std)} chargé depuis price_stats.pickle
-        all_tickers : liste complète des tickers (pour les colonnes one-hot)
-
-    Utilisé par l'API de serving pour construire l'entrée du modèle.
+        ticker : ticker cible (ex: "AAPL")
+        window : nombre de jours en entrée (60 pour daily, 180 pour monthly)
     """
     df = fetch_ohlcv(ticker)
     if len(df) < window:
         raise ValueError(
             f"Pas assez de données pour {ticker} (besoin {window}, trouvé {len(df)})"
         )
-
     recent = df.tail(window).copy()
-    mu, sigma = price_stats[ticker]
-    norm_prices = (recent["adj_close"].values - mu) / (sigma + 1e-8)
-
-    prophet_df = pd.DataFrame({
+    return pd.DataFrame({
         "ds": recent.index,
-        "y":  norm_prices,
-    })
-    for t in all_tickers:
-        col = f"ticker_{t.replace('-', '_')}"
-        prophet_df[col] = 1.0 if t == ticker else 0.0
-
-    return prophet_df.reset_index(drop=True)
+        "y":  recent["adj_close"].values,
+    }).reset_index(drop=True)
 
 
 if __name__ == "__main__":
