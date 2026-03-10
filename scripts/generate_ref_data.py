@@ -3,10 +3,14 @@ Génère data/ref_data.csv et artifacts/scaler.pickle.
 À lancer une fois depuis la racine du projet :
     python scripts/generate_ref_data.py
 """
+import sys
 import pickle
 import pandas as pd
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from ml.features.feature_engineering import fetch_ohlcv, compute_features, FEATURE_COLS
 from ml.training.config import TrainingConfig
 

@@ -1,7 +1,11 @@
+import sys
 import pickle
 import warnings
 import pandas as pd
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from ml.features.feature_engineering import fetch_ohlcv, compute_features
 from ml.training.config import TrainingConfig
 from ml.training.train import _build_training_df, _fit_prophet
