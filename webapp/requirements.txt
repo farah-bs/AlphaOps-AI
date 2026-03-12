@@ -3,10 +3,10 @@ python-dotenv
 psycopg2-binary
 sqlalchemy
 pandas
+requests
 yfinance
 sqlglot
-
 langchain-community
 langchain-core
 langchain-mistralai
-langgraph
+langgraph   

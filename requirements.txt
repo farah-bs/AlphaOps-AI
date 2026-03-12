@@ -6,3 +6,7 @@ numpy
 kagglehub
 yfinance
 sqlglot
+prophet
+scikit-learn
+ta
+plotly

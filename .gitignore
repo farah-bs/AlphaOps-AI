@@ -76,3 +76,8 @@ Thumbs.db
 ########################################
 claude_logs/
 CLAUDE.md
+data/ref_data.csv
+data/prod_data.csv
+ml/features/features.txt
+startup.txt
+notes.txt
