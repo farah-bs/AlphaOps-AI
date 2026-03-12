@@ -167,6 +167,8 @@ services:
     environment:
       - PGHOST=postgres_data
       - PGPORT=5432
+    volumes:
+      - ./webapp/app.py:/app/app.py
     ports:
       - "8501:8501"
 
