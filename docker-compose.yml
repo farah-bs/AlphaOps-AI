@@ -169,6 +169,8 @@ services:
       - PGPORT=5432
     volumes:
       - ./webapp/app.py:/app/app.py
+      - ./ml:/app/ml
+      - ./artifacts:/artifacts
     ports:
       - "8501:8501"
 
