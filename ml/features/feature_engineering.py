@@ -37,6 +37,11 @@ def fetch_ohlcv(ticker: str, start_date: str = "2020-01-01") -> pd.DataFrame:
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add technical indicator columns to the OHLCV dataframe."""
+    # Fallback : utiliser close_price si adj_close est NaN (ex: crypto sans adj)
+    if "close_price" in df.columns:
+        df = df.copy()
+        df["adj_close"] = df["adj_close"].fillna(df["close_price"])
+
     close = df["adj_close"]
 
     df["log_return"] = np.log(close / close.shift(1))

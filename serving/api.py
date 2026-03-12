@@ -20,6 +20,9 @@ price_stats:    dict = {}
 TRAIN_END = pd.Timestamp("2023-12-31")
 RETRAIN_K = 50   # réentraîner toutes les k lignes prod
 
+# Tickers qui tradent 7j/7 → fréquence calendaire au lieu des jours ouvrés
+CRYPTO_TICKERS = {"BTC-USD", "ETH-USD"}
+
 app = FastAPI(title="AlphaOps Serving API")
 
 
@@ -72,12 +75,18 @@ def predict(req: PredictRequest):
 
     # Vraie dernière date du modèle (fenêtres non-overlapping peuvent s'arrêter
     # avant TRAIN_END si le reste < window est ignoré)
-    today          = pd.Timestamp.today().normalize()
-    last_train_dt  = pd.Timestamp(model.history_dates.max()).normalize()
-    business_days  = len(pd.bdate_range(last_train_dt + pd.Timedelta(days=1), today))
-    days_to_extend = max(business_days + horizon, horizon)
+    today         = pd.Timestamp.today().normalize()
+    last_train_dt = pd.Timestamp(model.history_dates.max()).normalize()
+    since         = last_train_dt + pd.Timedelta(days=1)
 
-    future   = model.make_future_dataframe(periods=days_to_extend, freq="B")
+    if ticker in CRYPTO_TICKERS:
+        days_since     = len(pd.date_range(since, today))
+        days_to_extend = max(days_since + horizon, horizon)
+        future         = model.make_future_dataframe(periods=days_to_extend, freq="D")
+    else:
+        days_since     = len(pd.bdate_range(since, today))
+        days_to_extend = max(days_since + horizon, horizon)
+        future         = model.make_future_dataframe(periods=days_to_extend, freq="B")
     forecast = model.predict(future)
 
     # Les `horizon` dernières lignes = prédictions futures

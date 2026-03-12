@@ -6,6 +6,7 @@ WORKDIR /app
 COPY webapp/requirements.txt .
 COPY webapp/app.py .
 COPY src ./src
+COPY ml ./ml
 
 RUN pip3 install --upgrade pip
 RUN pip3 install -r requirements.txt

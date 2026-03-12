@@ -1,6 +1,9 @@
 name: alphaops_ai
 
 services:
+
+  # ─── Bases de données ────────────────────────────────────────────────────────
+
   postgres_data:
     image: postgres:15
     container_name: postgres_data
@@ -36,8 +39,12 @@ services:
       interval: 5s
       retries: 10
 
+  # ─── Airflow ──────────────────────────────────────────────────────────────────
+
   airflow_init:
-    build: .
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
     container_name: airflow_init
     depends_on:
       postgres_airflow:
@@ -60,6 +67,8 @@ services:
       - ./airflow/plugins:/opt/airflow/plugins
       - ./src:/opt/airflow/src
       - ./data:/opt/airflow/data
+      - ./ml:/opt/airflow/ml
+      - ./artifacts:/opt/airflow/artifacts
     command: >
       bash -c "
       airflow db init &&
@@ -67,7 +76,9 @@ services:
       "
 
   airflow_webserver:
-    build: .
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
     container_name: airflow_webserver
     restart: unless-stopped
     depends_on:
@@ -78,7 +89,6 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_PGUSER}:${AIRFLOW_PGPASSWORD}@postgres_airflow:5432/${AIRFLOW_PGDATABASE}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       PYTHONPATH: /opt/airflow
-
       PGHOST: ${PGHOST}
       PGPORT: ${PGPORT}
       PGDATABASE: ${PGDATABASE}
@@ -90,15 +100,16 @@ services:
       - ./airflow/plugins:/opt/airflow/plugins
       - ./src:/opt/airflow/src
       - ./data:/opt/airflow/data
+      - ./ml:/opt/airflow/ml
+      - ./artifacts:/opt/airflow/artifacts
     ports:
       - "8081:8080"
-    command: >
-      bash -c "
-      airflow webserver
-      "
+    command: airflow webserver
 
   airflow_scheduler:
-    build: .
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
     container_name: airflow_scheduler
     restart: unless-stopped
     depends_on:
@@ -109,7 +120,6 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_PGUSER}:${AIRFLOW_PGPASSWORD}@postgres_airflow:5432/${AIRFLOW_PGDATABASE}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       PYTHONPATH: /opt/airflow
-
       PGHOST: ${PGHOST}
       PGPORT: ${PGPORT}
       PGDATABASE: ${PGDATABASE}
@@ -121,30 +131,48 @@ services:
       - ./airflow/plugins:/opt/airflow/plugins
       - ./src:/opt/airflow/src
       - ./data:/opt/airflow/data
-    command: >
-      bash -c "
-      airflow scheduler
-      "
+      - ./ml:/opt/airflow/ml
+      - ./artifacts:/opt/airflow/artifacts
+    command: airflow scheduler
 
-  streamlit:
-    image: python:3.11-slim
+  # ─── Serving API ──────────────────────────────────────────────────────────────
+
+  serving:
+    build:
+      context: .
+      dockerfile: serving/Dockerfile
+    container_name: serving
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./data:/data
+      - ./artifacts:/artifacts
+
+  # ─── Webapp Streamlit ─────────────────────────────────────────────────────────
+
+  webapp:
+    build:
+      context: .
+      dockerfile: webapp/Dockerfile
     container_name: webapp
-    working_dir: /app
+    restart: unless-stopped
     depends_on:
       postgres_data:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      - PGHOST=postgres_data
+      - PGPORT=5432
+    volumes:
+      - ./webapp/app.py:/app/app.py
+      - ./ml:/app/ml
+      - ./artifacts:/artifacts
     ports:
       - "8501:8501"
-    volumes:
-      - ./webapp:/app
-      - ./src:/app/src
-    command: >
-      bash -c "
-      pip install --no-cache-dir -r requirements.txt &&
-      streamlit run app.py --server.port 8501 --server.address=0.0.0.0
-      "
 
 volumes:
   pgdata_financial:
