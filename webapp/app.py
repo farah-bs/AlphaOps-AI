@@ -335,7 +335,9 @@ def make_3d_chart(
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_chat, tab_predict, tab_backtest = st.tabs(["💬 Chatbot", "🔮 Prédiction", "📊 Backtest"])
+tab_chat, tab_predict, tab_backtest = st.tabs(
+    ["💬 Chatbot", "🔮 Prédiction", "📊 Backtest"]
+)
 
 # ── Onglet Chatbot ────────────────────────────────────────────────────────────
 with tab_chat:
@@ -885,3 +887,4 @@ with tab_backtest:
             df_show["Direction OK"]       = df_show["Direction OK"].map({1: "✅", 0: "❌"})
             df_show["Dans l'intervalle"]  = df_show["Dans l'intervalle"].map({1: "✅", 0: "❌"})
             st.dataframe(df_show, use_container_width=True, hide_index=True)
+

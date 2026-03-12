@@ -171,6 +171,7 @@ services:
       - ./webapp/app.py:/app/app.py
       - ./ml:/app/ml
       - ./artifacts:/artifacts
+      - ./artifacts:/app/artifacts
     ports:
       - "8501:8501"
 

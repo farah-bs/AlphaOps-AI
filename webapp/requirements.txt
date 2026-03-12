@@ -12,4 +12,6 @@ langchain-community
 langchain-core
 langchain-mistralai
 langgraph
-prophet   
+prophet
+scikit-learn
+ta
