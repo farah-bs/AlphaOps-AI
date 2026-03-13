@@ -15,3 +15,4 @@ langgraph
 prophet
 scikit-learn
 ta
+mlflow

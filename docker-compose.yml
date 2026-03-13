@@ -39,6 +39,19 @@ services:
       interval: 5s
       retries: 10
 
+  # ─── MLflow Tracking Server ───────────────────────────────────────────────────
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: mlflow/Dockerfile
+    container_name: mlflow
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/mlruns
+
   # ─── Airflow ──────────────────────────────────────────────────────────────────
 
   airflow_init:
@@ -115,6 +128,8 @@ services:
     depends_on:
       airflow_init:
         condition: service_completed_successfully
+      mlflow:
+        condition: service_started
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_PGUSER}:${AIRFLOW_PGPASSWORD}@postgres_airflow:5432/${AIRFLOW_PGDATABASE}
@@ -125,6 +140,7 @@ services:
       PGDATABASE: ${PGDATABASE}
       PGUSER: ${PGUSER}
       PGPASSWORD: ${PGPASSWORD}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -167,6 +183,7 @@ services:
     environment:
       - PGHOST=postgres_data
       - PGPORT=5432
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
     volumes:
       - ./webapp/app.py:/app/app.py
       - ./ml:/app/ml
