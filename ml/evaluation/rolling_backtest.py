@@ -283,6 +283,152 @@ def save_backtest_results(
     print(f"  Sauvegardé : {summary_path.name}")
 
 
+# ── Logging MLflow ────────────────────────────────────────────────────────────
+
+def log_backtest_to_mlflow(
+    ticker: str,
+    detail_df: pd.DataFrame,
+    summary: Dict,
+    cfg: Optional[TrainingConfig] = None,
+    csv_path: Optional[Path] = None,
+    json_path: Optional[Path] = None,
+) -> None:
+    """
+    Log un run MLflow complet pour un rolling backtest ticker.
+
+    Loggue : paramètres (ticker, fenêtre, step, hyperparams Prophet),
+    métriques (MAE, RMSE, MAPE, directional accuracy, coverage),
+    artefacts (CSV détail, JSON résumé, graphique actual vs yhat).
+
+    Args:
+        ticker     : symbole évalué (ex: "AAPL")
+        detail_df  : DataFrame ligne par ligne du backtest
+        summary    : dict de métriques agrégées
+        cfg        : TrainingConfig utilisé (pour les hyperparams Prophet)
+        csv_path   : chemin vers le CSV de détail déjà sauvegardé
+        json_path  : chemin vers le JSON résumé déjà sauvegardé
+    """
+    import mlflow
+    from ml.registry.mlflow_utils import (
+        EXPERIMENT_BACKTEST, BASE_TAGS,
+        get_or_create_experiment, log_params_safe,
+        log_metrics_safe, log_artifact_path,
+        log_dict_as_artifact, make_run_name, setup_mlflow,
+    )
+
+    if cfg is None:
+        cfg = TrainingConfig()
+
+    setup_mlflow()
+    exp_id   = get_or_create_experiment(EXPERIMENT_BACKTEST)
+    run_name = make_run_name("backtest", ticker)
+
+    with mlflow.start_run(experiment_id=exp_id, run_name=run_name):
+
+        # Tags
+        mlflow.set_tags({
+            **BASE_TAGS,
+            "stage":     "evaluation",
+            "eval_type": "rolling_backtest",
+            "ticker":    ticker,
+        })
+
+        # Paramètres du backtest + hyperparams Prophet
+        log_params_safe({
+            "ticker":                   ticker,
+            "train_window":             summary.get("train_window"),
+            "step":                     summary.get("step"),
+            "start_date":               summary.get("start_date"),
+            "changepoint_prior_scale":  cfg.changepoint_prior_scale,
+            "seasonality_prior_scale":  cfg.seasonality_prior_scale,
+            "seasonality_mode":         cfg.seasonality_mode,
+            "daily_seasonality":        cfg.daily_seasonality,
+            "weekly_seasonality":       cfg.weekly_seasonality,
+            "yearly_seasonality":       cfg.yearly_seasonality,
+        })
+
+        # Métriques
+        log_metrics_safe({
+            "mae":                      summary.get("mae"),
+            "rmse":                     summary.get("rmse"),
+            "mape_pct":                 summary.get("mape_pct"),
+            "directional_accuracy_pct": summary.get("directional_accuracy_pct"),
+            "interval_coverage_pct":    summary.get("interval_coverage_pct"),
+            "n_predictions":            summary.get("n_predictions"),
+        })
+
+        # Artifacts : CSV + JSON déjà sauvegardés sur disque
+        if csv_path:
+            log_artifact_path(csv_path)
+        if json_path:
+            log_artifact_path(json_path)
+
+        # Artifact : résumé JSON dans MLflow (sous-dossier summaries/)
+        log_dict_as_artifact(summary, f"summary_{ticker}")
+
+        # Artifact : graphique actual vs yhat (PNG)
+        _log_backtest_figure(detail_df, ticker)
+
+    print(f"  [MLflow] Run backtest {ticker} loggué.")
+
+
+def _log_backtest_figure(detail_df: pd.DataFrame, ticker: str) -> None:
+    """
+    Génère et logue un graphique actual vs yhat en PNG dans MLflow.
+
+    Utilise matplotlib (dépendance de Prophet, toujours disponible).
+    Silencieux en cas d'erreur pour ne pas bloquer le backtest.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")  # backend non-interactif, compatible serveur
+        import matplotlib.pyplot as plt
+        import mlflow
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+
+        # Intervalle de confiance
+        ax.fill_between(
+            detail_df["target_date"],
+            detail_df["yhat_lower"],
+            detail_df["yhat_upper"],
+            alpha=0.18, color="#00d4ff", label="Intervalle [lower, upper]",
+        )
+        # Prix réel
+        ax.plot(
+            detail_df["target_date"], detail_df["actual"],
+            color="#ff6b35", linewidth=1.5, label="Réel",
+        )
+        # Prédiction
+        ax.plot(
+            detail_df["target_date"], detail_df["yhat"],
+            color="#00d4ff", linewidth=1.5, linestyle="--", label="yhat",
+        )
+
+        ax.set_title(f"{ticker} — Actual vs Yhat (Rolling Backtest)")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Prix ($)")
+        ax.legend()
+        ax.grid(alpha=0.3)
+        fig.tight_layout()
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".png", prefix=f"backtest_{ticker}_", delete=False,
+        ) as f:
+            tmp_path = Path(f.name)
+
+        fig.savefig(tmp_path, dpi=100, bbox_inches="tight")
+        plt.close(fig)
+
+        mlflow.log_artifact(str(tmp_path), artifact_path="figures")
+        tmp_path.unlink(missing_ok=True)
+
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"[MLflow] Graphique non loggué pour {ticker} : {e}"
+        )
+
+
 # ── Multi-tickers ─────────────────────────────────────────────────────────────
 
 def run_multi_ticker_backtest(
@@ -330,7 +476,23 @@ def run_multi_ticker_backtest(
                 start_date=start_date,
                 cfg=cfg,
             )
+            detail_path  = ARTIFACTS / f"backtest_{ticker}.csv"
+            summary_path = ARTIFACTS / f"backtest_summary_{ticker}.json"
             save_backtest_results(ticker, detail_df, summary)
+
+            # Logging MLflow (non-bloquant)
+            try:
+                log_backtest_to_mlflow(
+                    ticker=ticker,
+                    detail_df=detail_df,
+                    summary=summary,
+                    cfg=cfg,
+                    csv_path=detail_path,
+                    json_path=summary_path,
+                )
+            except Exception as mlflow_err:
+                print(f"  [MLflow] Avertissement {ticker} : {mlflow_err}")
+
             all_summaries.append(summary)
 
         except Exception as e:

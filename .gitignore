@@ -51,6 +51,13 @@ artifacts/*.pickle
 artifacts/*.pkl
 artifacts/*.joblib
 artifacts/*.onnx
+artifacts/backtest_*.csv
+artifacts/backtest_*.json
+
+########################################
+# MLFLOW
+########################################
+mlruns/
 
 ########################################
 # DATA FILES (si CSV temporaires)

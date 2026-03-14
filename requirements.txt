@@ -9,4 +9,5 @@ sqlglot
 prophet
 scikit-learn
 ta
+mlflow
 plotly

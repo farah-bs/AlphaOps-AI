@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from ml.evaluation.rolling_backtest import (
+    log_backtest_to_mlflow,
     rolling_backtest_daily,
     run_multi_ticker_backtest,
     save_backtest_results,
@@ -123,8 +124,23 @@ def main() -> None:
                 start_date=args.start_date,
                 cfg=cfg,
             )
+            detail_path  = ROOT / "artifacts" / f"backtest_{ticker}.csv"
+            summary_path = ROOT / "artifacts" / f"backtest_summary_{ticker}.json"
             save_backtest_results(ticker, detail_df, summary)
             _print_summary(summary)
+
+            # Logging MLflow (non-bloquant)
+            try:
+                log_backtest_to_mlflow(
+                    ticker=ticker,
+                    detail_df=detail_df,
+                    summary=summary,
+                    cfg=cfg,
+                    csv_path=detail_path,
+                    json_path=summary_path,
+                )
+            except Exception as mlflow_err:
+                print(f"\n[MLflow] Avertissement : {mlflow_err}")
 
         except Exception as e:
             print(f"\nERREUR : {e}", file=sys.stderr)
