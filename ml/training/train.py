@@ -120,6 +120,32 @@ def train(cfg: TrainingConfig = CFG) -> dict:
     }
 
 
+def _log_prophet_models_to_run(models_daily: dict, models_monthly: dict) -> None:
+    """
+    Logue chaque modèle Prophet dans le run MLflow actif via le flavor natif.
+
+    Utilise mlflow.prophet.log_model() qui sérialise en JSON (format Prophet
+    natif, plus propre que pickle) sous models/daily/<TICKER> et
+    models/monthly/<TICKER> dans les artifacts du run courant.
+
+    Ces chemins sont ensuite référencés par register_prophet_models() pour
+    créer les versions dans le Model Registry.
+
+    Silencieux par modèle en cas d'erreur pour ne pas bloquer le run global.
+    """
+    import mlflow.prophet
+
+    for horizon, models in [("daily", models_daily), ("monthly", models_monthly)]:
+        for ticker, model in models.items():
+            try:
+                mlflow.prophet.log_model(
+                    pr_model=model,
+                    artifact_path=f"models/{horizon}/{ticker}",
+                )
+            except Exception as e:
+                print(f"    [MLflow] log_model ignoré ({horizon}/{ticker}) : {e}")
+
+
 def _log_training_to_mlflow(
     cfg: TrainingConfig,
     models_daily: dict,
@@ -133,18 +159,21 @@ def _log_training_to_mlflow(
     artefacts (pickles), et un JSON résumé des tickers entraînés.
     """
     import mlflow
+    import mlflow.prophet
     from ml.registry.mlflow_utils import (
         EXPERIMENT_TRAINING, BASE_TAGS,
         get_or_create_experiment, log_params_safe,
         log_metrics_safe, log_artifact_path,
         log_dict_as_artifact, make_run_name, setup_mlflow,
+        register_prophet_models,
     )
 
     setup_mlflow()
     exp_id   = get_or_create_experiment(EXPERIMENT_TRAINING)
     run_name = make_run_name("train_prophet")
 
-    with mlflow.start_run(experiment_id=exp_id, run_name=run_name):
+    with mlflow.start_run(experiment_id=exp_id, run_name=run_name) as run:
+        run_id = run.info.run_id
 
         # Tags
         mlflow.set_tags({
@@ -176,7 +205,7 @@ def _log_training_to_mlflow(
             "n_models_monthly":   len(models_monthly),
         })
 
-        # Artifacts : pickles
+        # Artifacts : pickles (compatibilité serving existant conservée)
         for fname in ["models_daily.pickle", "models_monthly.pickle", "price_stats.pickle"]:
             log_artifact_path(ARTIFACTS / fname)
 
@@ -193,7 +222,17 @@ def _log_training_to_mlflow(
         }
         log_dict_as_artifact(tickers_summary, "tickers_summary")
 
+        # ── Log des modèles Prophet individuels (pour le Model Registry) ──────
+        # Chaque modèle est loggué via le flavor natif MLflow Prophet (JSON, pas pickle)
+        # sous models/daily/<TICKER> et models/monthly/<TICKER> dans ce run.
+        print("  [MLflow] Log des modèles Prophet (flavor natif)...")
+        _log_prophet_models_to_run(models_daily, models_monthly)
+
     print("  [MLflow] Run entraînement loggué.")
+
+    # ── Enregistrement dans le Model Registry (après fermeture du run) ────────
+    # Crée une nouvelle version par (ticker, horizon) dans le registry MLflow.
+    register_prophet_models(run_id, models_daily, models_monthly)
 
 
 if __name__ == "__main__":

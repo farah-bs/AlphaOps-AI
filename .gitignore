@@ -58,6 +58,7 @@ artifacts/backtest_*.json
 # MLFLOW
 ########################################
 mlruns/
+ml/registry/REGISTRY.md
 
 ########################################
 # DATA FILES (si CSV temporaires)
