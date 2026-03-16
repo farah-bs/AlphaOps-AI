@@ -13,7 +13,7 @@ services:
       - POSTGRES_PASSWORD=${PGPASSWORD}
       - POSTGRES_DB=${PGDATABASE}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata_financial:/var/lib/postgresql/data
       - ./data/schema:/docker-entrypoint-initdb.d:ro
@@ -31,7 +31,7 @@ services:
       - POSTGRES_PASSWORD=${AIRFLOW_PGPASSWORD}
       - POSTGRES_DB=${AIRFLOW_PGDATABASE}
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - pgdata_airflow:/var/lib/postgresql/data
     healthcheck:
@@ -48,7 +48,7 @@ services:
     container_name: mlflow
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     volumes:
       - ./mlruns:/mlruns
 
@@ -116,7 +116,7 @@ services:
       - ./ml:/opt/airflow/ml
       - ./artifacts:/opt/airflow/artifacts
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     command: airflow webserver
 
   airflow_scheduler:
@@ -165,7 +165,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8082:8080"
+      - "127.0.0.1:8082:8080"
     volumes:
       - ./data:/data
       - ./artifacts:/artifacts
@@ -193,7 +193,7 @@ services:
       - ./artifacts:/artifacts
       - ./artifacts:/app/artifacts
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
 
 volumes:
   pgdata_financial:
