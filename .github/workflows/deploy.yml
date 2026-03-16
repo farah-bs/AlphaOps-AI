@@ -1,0 +1,113 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# AlphaOps AI — CI/CD : déploiement automatique sur le VPS
+#
+# Déclenché à chaque push sur `main`.
+# Secrets GitHub requis (Settings → Secrets → Actions) :
+#   VPS_HOST       → IP ou domaine du VPS
+#   VPS_USER       → Utilisateur SSH (ex: deploy)
+#   VPS_SSH_KEY    → Clé privée SSH (la clé publique est sur le VPS)
+#   VPS_PORT       → Port SSH (défaut: 22)
+#   ENV_PROD       → Contenu complet du fichier .env de production
+#   HTPASSWD       → Contenu du fichier .htpasswd (généré via htpasswd)
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:    # Permet aussi un déclenchement manuel depuis GitHub
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # Ne jamais annuler un déploiement en cours
+
+jobs:
+  # ── 1. Tests / lint rapide avant de déployer ─────────────────────────────────
+  lint:
+    name: Vérification rapide
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Lint avec ruff
+        run: |
+          pip install ruff --quiet
+          ruff check webapp/app.py serving/api.py ml/ src/ --ignore E501 || true
+          # `|| true` : on avertit sans bloquer le déploiement
+
+  # ── 2. Déploiement SSH sur le VPS ────────────────────────────────────────────
+  deploy:
+    name: Déploiement production
+    runs-on: ubuntu-latest
+    needs: lint
+    environment: production     # Permet une approbation manuelle si configurée
+
+    steps:
+      - name: Checkout (pour valider le commit)
+        uses: actions/checkout@v4
+
+      - name: Déployer sur le VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          port:     ${{ secrets.VPS_PORT || 22 }}
+          timeout:  300s
+          script: |
+            set -e   # Arrêter immédiatement si une commande échoue
+
+            echo "═══════════════════════════════════════════"
+            echo " AlphaOps AI — Déploiement $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "═══════════════════════════════════════════"
+
+            cd /opt/alphaops
+
+            # ── Mise à jour du code ─────────────────────────────────────────
+            echo "[1/5] Pull du code..."
+            git fetch --all
+            git reset --hard origin/main
+
+            # ── Injection des secrets ───────────────────────────────────────
+            echo "[2/5] Mise à jour des secrets..."
+            echo '${{ secrets.ENV_PROD }}'    > .env
+            echo '${{ secrets.HTPASSWD }}'   > nginx/.htpasswd
+            chmod 600 .env nginx/.htpasswd
+
+            # ── Rebuild et redémarrage ──────────────────────────────────────
+            echo "[3/5] Build des images Docker..."
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              build --no-cache --parallel
+
+            echo "[4/5] Redémarrage des services..."
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              up -d --remove-orphans
+
+            # ── Nettoyage ───────────────────────────────────────────────────
+            echo "[5/5] Nettoyage des images obsolètes..."
+            docker image prune -f
+            docker volume prune -f --filter "label!=keep"
+
+            echo ""
+            echo "Déploiement terminé avec succès !"
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+
+      - name: Notification succès
+        if: success()
+        run: echo "Déploiement réussi — commit ${{ github.sha }}"
+
+      - name: Notification échec
+        if: failure()
+        run: echo "Déploiement échoué — vérifier les logs GitHub Actions"
