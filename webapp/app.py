@@ -444,7 +444,11 @@ with tab_predict:
             pass
 
         # ── Métriques ────────────────────────────────────────────────────────
-        mc1, mc2, mc3, mc4 = st.columns(4)
+        # Probabilité de hausse : dernière prédiction (daily) ou médiane (monthly)
+        prob_up_values = df_pred["prob_up"].dropna() if "prob_up" in df_pred.columns else pd.Series([])
+        prob_up = float(prob_up_values.iloc[-1]) if len(prob_up_values) > 0 else None
+
+        mc1, mc2, mc3, mc4, mc5 = st.columns(5)
         with mc1:
             st.metric(
                 "Direction",
@@ -453,10 +457,19 @@ with tab_predict:
                 delta_color="normal",
             )
         with mc2:
-            st.metric("Ticker", tk)
+            if prob_up is not None:
+                prob_pct = prob_up * 100
+                st.metric(
+                    "Prob. hausse",
+                    f"{prob_pct:.1f}%",
+                    delta=f"{prob_pct - 50:+.1f}% vs 50/50",
+                    delta_color="normal",
+                )
         with mc3:
-            st.metric("Horizon", "J+1" if last["mode"] == "daily" else "J+30")
+            st.metric("Ticker", tk)
         with mc4:
+            st.metric("Horizon", "J+1" if last["mode"] == "daily" else "J+30")
+        with mc5:
             if not df_hist.empty:
                 st.metric(
                     "Dernier cours",
@@ -502,11 +515,24 @@ with tab_predict:
         st.divider()
         st.markdown("#### Détail des prédictions")
 
-        df_display = df_pred[["date", "yhat", "yhat_lower", "yhat_upper"]].copy()
-        df_display.columns = ["Date", "Prévision ($)", "Borne basse ($)", "Borne haute ($)"]
+        cols_to_show = ["date", "yhat", "yhat_lower", "yhat_upper"]
+        if "prob_up" in df_pred.columns:
+            cols_to_show.append("prob_up")
+
+        df_display = df_pred[cols_to_show].copy()
+        rename_map = {
+            "date":       "Date",
+            "yhat":       "Prévision ($)",
+            "yhat_lower": "Borne basse ($)",
+            "yhat_upper": "Borne haute ($)",
+            "prob_up":    "Prob. hausse",
+        }
+        df_display.columns = [rename_map[c] for c in cols_to_show]
         df_display["Date"] = pd.to_datetime(df_display["Date"]).dt.strftime("%d %b %Y")
         for col in ["Prévision ($)", "Borne basse ($)", "Borne haute ($)"]:
             df_display[col] = df_display[col].apply(lambda x: f"{x:,.2f}")
+        if "Prob. hausse" in df_display.columns:
+            df_display["Prob. hausse"] = df_display["Prob. hausse"].apply(lambda x: f"{x*100:.1f}%")
 
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 

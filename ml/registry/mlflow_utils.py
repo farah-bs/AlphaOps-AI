@@ -237,7 +237,7 @@ def register_prophet_models(
     for horizon, models in [("daily", models_daily), ("monthly", models_monthly)]:
         for ticker in models:
             model_name = registry_model_name(ticker, horizon)
-            model_uri  = f"runs:/{run_id}/models/{horizon}/{ticker}"
+            model_uri  = f"runs:/{run_id}/models-{horizon}-{ticker}"
 
             try:
                 version = mlflow.register_model(model_uri=model_uri, name=model_name)

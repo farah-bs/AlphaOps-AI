@@ -73,6 +73,9 @@ def _fit_prophet_model(train_df: pd.DataFrame, cfg: TrainingConfig) -> Prophet:
     avec les hyperparamètres définis dans TrainingConfig.
     """
     m = Prophet(
+        n_changepoints=cfg.n_changepoints,
+        uncertainty_samples=cfg.uncertainty_samples,
+        interval_width=cfg.interval_width,
         changepoint_prior_scale=cfg.changepoint_prior_scale,
         seasonality_prior_scale=cfg.seasonality_prior_scale,
         seasonality_mode=cfg.seasonality_mode,

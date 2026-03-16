@@ -141,6 +141,7 @@ services:
       PGUSER: ${PGUSER}
       PGPASSWORD: ${PGPASSWORD}
       MLFLOW_TRACKING_URI: http://mlflow:5000
+      GIT_PYTHON_REFRESH: quiet
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -149,6 +150,8 @@ services:
       - ./data:/opt/airflow/data
       - ./ml:/opt/airflow/ml
       - ./artifacts:/opt/airflow/artifacts
+      - ./scripts:/opt/airflow/scripts
+      - ./mlruns:/mlruns
     command: airflow scheduler
 
   # ─── Serving API ──────────────────────────────────────────────────────────────
