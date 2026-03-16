@@ -39,6 +39,13 @@ docker-compose.override.yml
 *.pid
 
 ########################################
+# DÉPLOIEMENT / SÉCURITÉ
+########################################
+nginx/.htpasswd
+nginx/ssl/
+.env.prod
+
+########################################
 # POSTGRES / DATA
 ########################################
 pgdata_*/
@@ -51,6 +58,7 @@ artifacts/*.pickle
 artifacts/*.pkl
 artifacts/*.joblib
 artifacts/*.onnx
+artifacts/*.pt          # Modèles PyTorch (LSTM)
 artifacts/backtest_*.csv
 artifacts/backtest_*.json
 
