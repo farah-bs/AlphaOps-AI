@@ -29,7 +29,7 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import mlflow
 
@@ -184,5 +184,128 @@ def log_dict_as_artifact(data: Dict, filename: str, artifact_path: str = "summar
         tmp_path = Path(f.name)
     try:
         mlflow.log_artifact(str(tmp_path), artifact_path=artifact_path)
+    except Exception as e:
+        log.warning(f"[MLflow] Artifact JSON non loggué ({filename}) : {e}")
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+# ── Model Registry ─────────────────────────────────────────────────────────────
+
+def registry_model_name(ticker: str, horizon: str) -> str:
+    """
+    Construit le nom standardisé d'un modèle dans le MLflow Model Registry.
+
+    Convention : AlphaOps-Prophet-<Horizon>-<TICKER>
+    Exemples   : AlphaOps-Prophet-Daily-AAPL
+                 AlphaOps-Prophet-Monthly-BTC-USD
+
+    Args:
+        ticker  : symbole boursier (ex: "AAPL", "BTC-USD")
+        horizon : "daily" ou "monthly" (insensible à la casse)
+    """
+    return f"AlphaOps-Prophet-{horizon.capitalize()}-{ticker.upper()}"
+
+
+def register_prophet_models(
+    run_id: str,
+    models_daily: Dict,
+    models_monthly: Dict,
+    extra_tags: Optional[Dict[str, str]] = None,
+) -> None:
+    """
+    Enregistre les modèles Prophet dans le MLflow Model Registry.
+
+    À appeler APRÈS la fermeture du run MLflow (les modèles doivent déjà
+    être loggués dans ce run via mlflow.prophet.log_model).
+
+    Crée une nouvelle version pour chaque (ticker, horizon) dans le registry.
+    Pose des tags de traçabilité sur chaque version.
+
+    Args:
+        run_id        : ID du run MLflow contenant les modèles loggués
+        models_daily  : dict ticker → Prophet daily (déjà loggués dans le run)
+        models_monthly: dict ticker → Prophet monthly
+        extra_tags    : tags additionnels à poser sur chaque version
+    """
+    setup_mlflow()
+    client = mlflow.tracking.MlflowClient()
+
+    registered: list = []
+    failed:     list = []
+
+    for horizon, models in [("daily", models_daily), ("monthly", models_monthly)]:
+        for ticker in models:
+            model_name = registry_model_name(ticker, horizon)
+            model_uri  = f"runs:/{run_id}/models-{horizon}-{ticker}"
+
+            try:
+                version = mlflow.register_model(model_uri=model_uri, name=model_name)
+
+                # Tags de traçabilité sur la version enregistrée
+                version_tags = {
+                    "project":       "AlphaOps AI",
+                    "model_family":  "prophet",
+                    "horizon":       horizon,
+                    "ticker":        ticker,
+                    "source_run_id": run_id,
+                    "trained_at":    datetime.now().strftime("%Y-%m-%d"),
+                    **(extra_tags or {}),
+                }
+                for k, v in version_tags.items():
+                    client.set_model_version_tag(model_name, version.version, k, v)
+
+                registered.append(f"{model_name} v{version.version}")
+                log.info(f"[MLflow Registry] {model_name} v{version.version} enregistré.")
+
+            except Exception as e:
+                failed.append(f"{model_name}: {e}")
+                log.warning(f"[MLflow Registry] Échec {model_name} : {e}")
+
+    if registered:
+        print(f"  [MLflow Registry] {len(registered)} version(s) créée(s).")
+        for name in registered:
+            print(f"    [OK] {name}")
+    if failed:
+        print(f"  [MLflow Registry] {len(failed)} échec(s) :")
+        for msg in failed:
+            print(f"    [FAIL] {msg}")
+
+
+def load_model_from_registry(
+    model_name: str,
+    stage_or_version: str = "latest",
+) -> Any:
+    """
+    Charge un modèle Prophet depuis le MLflow Model Registry.
+
+    Args:
+        model_name       : nom complet du modèle dans le registry
+                           (ex: "AlphaOps-Prophet-Daily-AAPL")
+                           ou construit via registry_model_name(ticker, horizon)
+        stage_or_version : "latest"  → dernière version disponible
+                           "1", "2"  → numéro de version exact
+                           "Staging" / "Production" → modèles promus
+
+    Returns:
+        Modèle Prophet chargé (objet Prophet prêt à appeler .predict())
+
+    Exemples:
+        from ml.registry.mlflow_utils import load_model_from_registry, registry_model_name
+
+        # Dernière version AAPL daily
+        model = load_model_from_registry(registry_model_name("AAPL", "daily"))
+
+        # Version spécifique
+        model = load_model_from_registry("AlphaOps-Prophet-Daily-AAPL", "2")
+
+        # Modèle promu en production
+        model = load_model_from_registry("AlphaOps-Prophet-Daily-AAPL", "Production")
+    """
+    import mlflow.prophet
+    setup_mlflow()
+
+    model_uri = f"models:/{model_name}/{stage_or_version}"
+    log.info(f"[MLflow Registry] Chargement : {model_uri}")
+
+    return mlflow.prophet.load_model(model_uri)
