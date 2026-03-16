@@ -42,6 +42,9 @@ class PredictRequest(BaseModel):
     ticker: str
     mode:   Literal["daily", "monthly"] = "daily"
 
+class LSTMPredictRequest(BaseModel):
+    ticker: str
+
 class FeedbackRequest(BaseModel):
     ticker:     str
     date:       str
@@ -130,6 +133,28 @@ def predict(req: PredictRequest):
         "direction":   direction,
         "predictions": predictions,
     }
+
+
+@app.post("/predict/lstm")
+def predict_lstm(req: LSTMPredictRequest):
+    """
+    Probabilités de hausse LSTM à J+1, J+7 et J+30.
+
+    Retourne :
+        prob_up_1d  : P(prix dans 1 jour > prix aujourd'hui)
+        prob_up_7d  : P(prix dans 7 jours > prix aujourd'hui)
+        prob_up_30d : P(prix dans 30 jours > prix aujourd'hui)
+        signal_*    : "HAUSSE" (>55%) / "BAISSE" (<45%) / "NEUTRE"
+    """
+    ticker = req.ticker.upper()
+    try:
+        from ml.lstm.predict_lstm import get_lstm_prediction
+        result = get_lstm_prediction(ticker)
+        return {"ticker": ticker, **result}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur LSTM : {e}")
 
 
 @app.post("/feedback")

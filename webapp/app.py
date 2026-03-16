@@ -335,8 +335,8 @@ def make_3d_chart(
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_chat, tab_predict, tab_backtest = st.tabs(
-    ["💬 Chatbot", "🔮 Prédiction", "📊 Backtest"]
+tab_chat, tab_predict, tab_backtest, tab_lstm = st.tabs(
+    ["💬 Chatbot", "🔮 Prédiction", "📊 Backtest", "🧠 LSTM"]
 )
 
 # ── Onglet Chatbot ────────────────────────────────────────────────────────────
@@ -914,3 +914,146 @@ with tab_backtest:
             df_show["Dans l'intervalle"]  = df_show["Dans l'intervalle"].map({1: "✅", 0: "❌"})
             st.dataframe(df_show, use_container_width=True, hide_index=True)
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB LSTM — Probabilités directionnelles J+1 / J+7 / J+30
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _gauge_color(prob: float) -> str:
+    """Couleur selon la probabilité : vert (hausse), rouge (baisse), gris (neutre)."""
+    if prob > 0.55:
+        return "#00d4ff"   # cyan → HAUSSE
+    if prob < 0.45:
+        return "#ff6b35"   # orange → BAISSE
+    return "#888888"       # gris → NEUTRE
+
+
+def _make_gauge(label: str, prob: float) -> go.Figure:
+    """Gauge Plotly Indicator pour une proba directionnelle."""
+    color = _gauge_color(prob)
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=round(prob * 100, 1),
+        number={"suffix": "%", "font": {"size": 28, "color": color}},
+        title={"text": label, "font": {"size": 14, "color": "rgba(255,255,255,0.7)"}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": "rgba(255,255,255,0.3)"},
+            "bar":  {"color": color, "thickness": 0.25},
+            "bgcolor": "rgba(255,255,255,0.04)",
+            "borderwidth": 0,
+            "steps": [
+                {"range": [0,  45], "color": "rgba(255,107,53,0.15)"},
+                {"range": [45, 55], "color": "rgba(136,136,136,0.1)"},
+                {"range": [55, 100],"color": "rgba(0,212,255,0.15)"},
+            ],
+            "threshold": {
+                "line": {"color": "white", "width": 2},
+                "thickness": 0.8,
+                "value": 50,
+            },
+        },
+    ))
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(t=60, b=10, l=20, r=20),
+        height=220,
+    )
+    return fig
+
+
+with tab_lstm:
+    st.subheader("🧠 Prédictions LSTM — Direction J+1 / J+7 / J+30")
+    st.caption(
+        "Le modèle LSTM prédit la **probabilité de hausse** à différents horizons. "
+        "Signal HAUSSE si prob > 55 %, BAISSE si < 45 %, NEUTRE sinon."
+    )
+
+    # ── Sélection du ticker ───────────────────────────────────────────────────
+    lstm_tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "SPY", "QQQ", "BTC-USD"]
+    lstm_ticker  = st.selectbox("Ticker", lstm_tickers, key="lstm_ticker_select")
+
+    if st.button("🔍 Analyser", key="lstm_analyze"):
+        with st.spinner(f"Prédiction LSTM pour {lstm_ticker}…"):
+            try:
+                resp = requests.post(
+                    f"{SERVING_URL}/predict/lstm",
+                    json={"ticker": lstm_ticker},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                prob_1d  = data.get("prob_up_1d",  0.5)
+                prob_7d  = data.get("prob_up_7d",  0.5)
+                prob_30d = data.get("prob_up_30d", 0.5)
+                sig_1d   = data.get("signal_1d",  "—")
+                sig_7d   = data.get("signal_7d",  "—")
+                sig_30d  = data.get("signal_30d", "—")
+
+                # ── Métriques synthétiques ────────────────────────────────────
+                mc1, mc2, mc3, mc4 = st.columns(4)
+                with mc1:
+                    st.metric("Ticker", lstm_ticker)
+                with mc2:
+                    st.metric("Signal J+1",  sig_1d,  f"{prob_1d*100:.1f}%")
+                with mc3:
+                    st.metric("Signal J+7",  sig_7d,  f"{prob_7d*100:.1f}%")
+                with mc4:
+                    st.metric("Signal J+30", sig_30d, f"{prob_30d*100:.1f}%")
+
+                st.divider()
+
+                # ── Gauges ────────────────────────────────────────────────────
+                gc1, gc2, gc3 = st.columns(3)
+                with gc1:
+                    st.plotly_chart(
+                        _make_gauge("Hausse J+1", prob_1d),
+                        use_container_width=True,
+                        config={"displayModeBar": False},
+                    )
+                with gc2:
+                    st.plotly_chart(
+                        _make_gauge("Hausse J+7", prob_7d),
+                        use_container_width=True,
+                        config={"displayModeBar": False},
+                    )
+                with gc3:
+                    st.plotly_chart(
+                        _make_gauge("Hausse J+30", prob_30d),
+                        use_container_width=True,
+                        config={"displayModeBar": False},
+                    )
+
+                st.caption(
+                    "🔵 Cyan = HAUSSE (prob > 55 %)  ·  "
+                    "🟠 Orange = BAISSE (prob < 45 %)  ·  "
+                    "⬜ Gris = NEUTRE"
+                )
+
+                st.divider()
+
+                # ── Tableau récapitulatif ─────────────────────────────────────
+                summary_rows = [
+                    {"Horizon": "J+1",  "Prob. hausse": f"{prob_1d*100:.1f}%",  "Signal": sig_1d},
+                    {"Horizon": "J+7",  "Prob. hausse": f"{prob_7d*100:.1f}%",  "Signal": sig_7d},
+                    {"Horizon": "J+30", "Prob. hausse": f"{prob_30d*100:.1f}%", "Signal": sig_30d},
+                ]
+                st.dataframe(
+                    pd.DataFrame(summary_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            except requests.exceptions.ConnectionError:
+                st.error("❌ Impossible de joindre le service de serving. Vérifiez que le conteneur `serving` est démarré.")
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None and e.response.status_code == 404:
+                    st.warning(f"⚠️ Aucun modèle LSTM trouvé pour **{lstm_ticker}**. Lancez d'abord le DAG `lstm_training` dans Airflow.")
+                else:
+                    st.error(f"❌ Erreur API : {e}")
+            except Exception as e:
+                st.error(f"❌ Erreur inattendue : {e}")
+    else:
+        st.info("👆 Sélectionnez un ticker et cliquez sur **Analyser** pour obtenir les signaux LSTM.")
