@@ -128,6 +128,31 @@ services:
 
   streamlit:
     image: python:3.11-slim
+  # ─── Serving API ──────────────────────────────────────────────────────────────
+
+  serving:
+    build:
+      context: .
+      dockerfile: serving/Dockerfile
+    container_name: serving
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - HMAC_SECRET=${HMAC_SECRET}
+      - RETRAIN_K=${RETRAIN_K:-20}
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./data:/data
+      - ./artifacts:/artifacts
+
+  # ─── Webapp Streamlit ─────────────────────────────────────────────────────────
+
+  webapp:
+    build:
+      context: .
+      dockerfile: webapp/Dockerfile
     container_name: webapp
     working_dir: /app
     depends_on:
@@ -145,6 +170,27 @@ services:
       pip install --no-cache-dir -r requirements.txt &&
       streamlit run app.py --server.port 8501 --server.address=0.0.0.0
       "
+
+  # ─── LangChain Email Agent ───────────────────────────────────────────────────
+
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - FEEDBACK_BASE_URL=http://localhost:8082
+      - HMAC_SECRET=${HMAC_SECRET:-alphaops-secret-change-me}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+    ports:
+      - "8083:8083"
 
 volumes:
   pgdata_financial:
