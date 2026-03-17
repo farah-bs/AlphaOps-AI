@@ -37,6 +37,11 @@ def fetch_ohlcv(ticker: str, start_date: str = "2020-01-01") -> pd.DataFrame:
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add technical indicator columns to the OHLCV dataframe."""
+    # Fallback : utiliser close_price si adj_close est NaN (ex: crypto sans adj)
+    if "close_price" in df.columns:
+        df = df.copy()
+        df["adj_close"] = df["adj_close"].fillna(df["close_price"])
+
     close = df["adj_close"]
 
     df["log_return"] = np.log(close / close.shift(1))
@@ -128,6 +133,107 @@ def get_last_sequence(ticker: str, seq_len: int, scaler: StandardScaler) -> np.n
     recent = df.tail(seq_len)[FEATURE_COLS].values
     scaled = scaler.transform(recent)
     return scaled[np.newaxis, :, :].astype(np.float32)  # (1, seq_len, n_features)
+
+
+def _build_sequences_lstm(
+    scaled_X:   np.ndarray,
+    raw_prices: np.ndarray,
+    dates:      "pd.DatetimeIndex",
+    seq_len:    int,
+    horizons:   tuple = (1, 7, 30),
+) -> tuple:
+    """
+    Construit des séquences (X, y) pour le LSTM multi-horizon sans data leakage.
+
+    Pour chaque indice i dans [seq_len, N - max_horizon] :
+        X[i] = scaled_X[i-seq_len : i]          → features historiques
+        ref   = raw_prices[i-1]                  → dernier prix connu
+        y_h   = int(raw_prices[i + h - 1] > ref) → direction à horizon h
+
+    La date associée à la séquence est dates[i-1] (dernier jour dans la fenêtre).
+    Ceci permet de splitter train/val/test par date sans leakage sur les features.
+
+    Returns:
+        X_arr      : np.ndarray (N_seq, seq_len, n_features)  float32
+        y_arr      : np.ndarray (N_seq, len(horizons))         float32
+        date_index : pd.DatetimeIndex des derniers jours de chaque fenêtre
+    """
+    max_h   = max(horizons)
+    X_list, y_list, date_list = [], [], []
+
+    for i in range(seq_len, len(scaled_X) - max_h + 1):
+        X_list.append(scaled_X[i - seq_len : i])
+        ref     = raw_prices[i - 1]
+        targets = [int(raw_prices[i + h - 1] > ref) for h in horizons]
+        y_list.append(targets)
+        date_list.append(dates[i - 1])
+
+    return (
+        np.array(X_list,  dtype=np.float32),
+        np.array(y_list,  dtype=np.float32),
+        pd.DatetimeIndex(date_list),
+    )
+
+
+def prepare_data_lstm(
+    ticker:    str,
+    seq_len:   int   = 60,
+    train_end: str   = "2023-12-31",
+    val_end:   str   = "2024-06-30",
+    horizons:  tuple = (1, 7, 30),
+):
+    """
+    Pipeline complet LSTM multi-horizon pour un ticker.
+
+    Garanties anti-leakage :
+        - Le scaler est fit UNIQUEMENT sur les features de train
+        - Les targets sont calculés depuis raw adj_close (non scalé)
+        - Le split train/val/test se fait par date du dernier jour de la fenêtre
+
+    Returns:
+        (X_train, y_train), (X_val, y_val), (X_test, y_test), scaler
+        y shape : (N, len(horizons))  — colonnes = [J+1, J+7, J+30]
+    """
+    df = fetch_ohlcv(ticker)
+    df = compute_features(df)
+
+    max_h     = max(horizons)
+    train_df  = df[df.index <= train_end]
+
+    if len(train_df) < seq_len + max_h + 1:
+        raise ValueError(
+            f"Pas assez de données pour {ticker} "
+            f"(besoin > {seq_len + max_h}, got {len(train_df)})"
+        )
+
+    # Scaler fit sur le train uniquement
+    scaler = StandardScaler()
+    scaler.fit(train_df[FEATURE_COLS].values)
+
+    # Transformation de TOUTES les features (train + val + test)
+    X_all      = scaler.transform(df[FEATURE_COLS].values)
+    prices_all = df["adj_close"].values
+    dates_all  = df.index
+
+    # Construction des séquences multi-horizon sur le dataset complet
+    X_seq, y_seq, seq_dates = _build_sequences_lstm(
+        X_all, prices_all, dates_all, seq_len, horizons
+    )
+
+    # Split par date du dernier élément de chaque séquence
+    t_end = pd.Timestamp(train_end)
+    v_end = pd.Timestamp(val_end)
+
+    train_mask = seq_dates <= t_end
+    val_mask   = (seq_dates > t_end) & (seq_dates <= v_end)
+    test_mask  = seq_dates > v_end
+
+    return (
+        (X_seq[train_mask], y_seq[train_mask]),
+        (X_seq[val_mask],   y_seq[val_mask]),
+        (X_seq[test_mask],  y_seq[test_mask]),
+        scaler,
+    )
 
 
 def prepare_prophet_df(ticker: str, window: int) -> pd.DataFrame:

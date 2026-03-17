@@ -1,6 +1,9 @@
 name: alphaops_ai
 
 services:
+
+  # ─── Bases de données ────────────────────────────────────────────────────────
+
   postgres_data:
     image: postgres:15
     container_name: postgres_data
@@ -10,7 +13,7 @@ services:
       - POSTGRES_PASSWORD=${PGPASSWORD}
       - POSTGRES_DB=${PGDATABASE}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata_financial:/var/lib/postgresql/data
       - ./data/schema:/docker-entrypoint-initdb.d:ro
@@ -28,7 +31,7 @@ services:
       - POSTGRES_PASSWORD=${AIRFLOW_PGPASSWORD}
       - POSTGRES_DB=${AIRFLOW_PGDATABASE}
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - pgdata_airflow:/var/lib/postgresql/data
     healthcheck:
@@ -36,8 +39,25 @@ services:
       interval: 5s
       retries: 10
 
+  # ─── MLflow Tracking Server ───────────────────────────────────────────────────
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: mlflow/Dockerfile
+    container_name: mlflow
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./mlruns:/mlruns
+
+  # ─── Airflow ──────────────────────────────────────────────────────────────────
+
   airflow_init:
-    build: .
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
     container_name: airflow_init
     depends_on:
       postgres_airflow:
@@ -60,6 +80,8 @@ services:
       - ./airflow/plugins:/opt/airflow/plugins
       - ./src:/opt/airflow/src
       - ./data:/opt/airflow/data
+      - ./ml:/opt/airflow/ml
+      - ./artifacts:/opt/airflow/artifacts
     command: >
       bash -c "
       airflow db init &&
@@ -67,7 +89,9 @@ services:
       "
 
   airflow_webserver:
-    build: .
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
     container_name: airflow_webserver
     restart: unless-stopped
     depends_on:
@@ -78,7 +102,6 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_PGUSER}:${AIRFLOW_PGPASSWORD}@postgres_airflow:5432/${AIRFLOW_PGDATABASE}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       PYTHONPATH: /opt/airflow
-
       PGHOST: ${PGHOST}
       PGPORT: ${PGPORT}
       PGDATABASE: ${PGDATABASE}
@@ -90,41 +113,46 @@ services:
       - ./airflow/plugins:/opt/airflow/plugins
       - ./src:/opt/airflow/src
       - ./data:/opt/airflow/data
+      - ./ml:/opt/airflow/ml
+      - ./artifacts:/opt/airflow/artifacts
     ports:
-      - "8081:8080"
-    command: >
-      bash -c "
-      airflow webserver
-      "
+      - "127.0.0.1:8081:8080"
+    command: airflow webserver
 
   airflow_scheduler:
-    build: .
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
     container_name: airflow_scheduler
     restart: unless-stopped
     depends_on:
       airflow_init:
         condition: service_completed_successfully
+      mlflow:
+        condition: service_started
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_PGUSER}:${AIRFLOW_PGPASSWORD}@postgres_airflow:5432/${AIRFLOW_PGDATABASE}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       PYTHONPATH: /opt/airflow
-
       PGHOST: ${PGHOST}
       PGPORT: ${PGPORT}
       PGDATABASE: ${PGDATABASE}
       PGUSER: ${PGUSER}
       PGPASSWORD: ${PGPASSWORD}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      GIT_PYTHON_REFRESH: quiet
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - ./src:/opt/airflow/src
       - ./data:/opt/airflow/data
-    command: >
-      bash -c "
-      airflow scheduler
-      "
+      - ./ml:/opt/airflow/ml
+      - ./artifacts:/opt/airflow/artifacts
+      - ./scripts:/opt/airflow/scripts
+      - ./mlruns:/mlruns
+    command: airflow scheduler
 
   # ─── Serving API ──────────────────────────────────────────────────────────────
 
@@ -140,7 +168,7 @@ services:
       - HMAC_SECRET=${HMAC_SECRET}
       - RETRAIN_K=${RETRAIN_K:-20}
     ports:
-      - "8082:8080"
+      - "127.0.0.1:8082:8080"
     volumes:
       - ./data:/data
       - ./artifacts:/artifacts
@@ -152,22 +180,24 @@ services:
       context: .
       dockerfile: webapp/Dockerfile
     container_name: webapp
-    working_dir: /app
+    restart: unless-stopped
     depends_on:
       postgres_data:
         condition: service_healthy
     env_file:
       - .env
-    ports:
-      - "8501:8501"
+    environment:
+      - PGHOST=postgres_data
+      - PGPORT=5432
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
     volumes:
-      - ./webapp:/app
-      - ./src:/app/src
-    command: >
-      bash -c "
-      pip install --no-cache-dir -r requirements.txt &&
-      streamlit run app.py --server.port 8501 --server.address=0.0.0.0
-      "
+      - ./webapp/app.py:/app/app.py
+      - ./ml:/app/ml
+      - ./artifacts:/artifacts
+      - ./artifacts:/app/artifacts
+      - ./artifacts/monitoring_reports:/app/artifacts/monitoring_reports
+    ports:
+      - "127.0.0.1:8501:8501"
 
   # ─── LangChain Email Agent ───────────────────────────────────────────────────
 

@@ -1,8 +1,10 @@
 streamlit
+plotly
 python-dotenv
 psycopg2-binary
 sqlalchemy
 pandas
+numpy
 requests
 yfinance
 sqlglot
@@ -10,4 +12,8 @@ langchain-community
 langchain-core
 langchain-mistralai
 langgraph
-plotly
+prophet
+scikit-learn
+ta
+mlflow
+evidently
