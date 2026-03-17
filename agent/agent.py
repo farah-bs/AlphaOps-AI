@@ -96,22 +96,7 @@ Génère un email structuré avec exactement ces sections (titres en gras en htm
 Résumé (2–3 phrases) — synthèse des signaux sur {ticker} sans jargon technique, et contexte général du marché. Par exemple, si les signaux sont mitigés, explique que les modèles sont incertains et que le marché est volatil, sans entrer dans les détails techniques de Prophet ou LSTM.
 Interprétation — interprétation des signaux, points de vigilance, et contexte général du marché sans jargon technique. Ne parle ni de Prophet ni de LSTM, mais plutôt de "modèle de tendance" et "modèle de séquences temporelles". Sois factuel et évite les spéculations.
 Recommandation — INVESTIR ou PATIENTER dans {ticker}, avec une justification en 1–2 phrases basée sur les signaux. Par exemple, si les signaux sont majoritairement positifs, recommander d'investir en expliquant que les modèles anticipent une hausse et que ça pourrait être une opportunité intéressante. Si les signaux sont mitigés ou négatifs, recommander de patienter en expliquant que les modèles sont incertains et que le marché est volatil.
-Votre avis — demander si l'utilisateur valide ou conteste cette analyse
-
-Termine impérativement avec les deux boutons HTML suivants (style inline) :
-
-<div style="margin-top:24px;text-align:center">
-  <a href="{agree_url}"
-     style="display:inline-block;padding:12px 28px;margin:6px;border-radius:6px;
-            background:#238636;color:#ffffff;font-weight:700;text-decoration:none;font-size:14px">
-    ✅ Bonne analyse - Je valide
-  </a>
-  <a href="{disagree_url}"
-     style="display:inline-block;padding:12px 28px;margin:6px;border-radius:6px;
-            background:#da3633;color:#ffffff;font-weight:700;text-decoration:none;font-size:14px">
-    ❌ Analyse incorrecte
-  </a>
-</div>
+Votre avis — demander si l'utilisateur valide ou conteste cette analyse (1-2 phrases, sans boutons).
 """),
 ])
 
@@ -119,7 +104,7 @@ Termine impérativement avec les deux boutons HTML suivants (style inline) :
 def _generate_body(req: NotifyRequest, agree_url: str, disagree_url: str, pred_date: str) -> str:
     lstm = req.lstm or LSTMSignals()
     chain = _EMAIL_PROMPT | llm | StrOutputParser()
-    return chain.invoke({
+    llm_content = chain.invoke({
         "ticker":      req.ticker,
         "date":        pred_date,
         "dir_daily":   _dir_str(req.direction_daily),
@@ -132,9 +117,21 @@ def _generate_body(req: NotifyRequest, agree_url: str, disagree_url: str, pred_d
         "prob_7d":     _prob_str(lstm.prob_7d),
         "signal_30d":  lstm.signal_30d,
         "prob_30d":    _prob_str(lstm.prob_30d),
-        "agree_url":   agree_url,
-        "disagree_url": disagree_url,
     })
+    buttons = f"""
+<div style="margin-top:24px;text-align:center">
+  <a href="{agree_url}"
+     style="display:inline-block;padding:12px 28px;margin:6px;border-radius:6px;
+            background:#238636;color:#ffffff;font-weight:700;text-decoration:none;font-size:14px">
+    ✅ Bonne analyse - Je valide
+  </a>
+  <a href="{disagree_url}"
+     style="display:inline-block;padding:12px 28px;margin:6px;border-radius:6px;
+            background:#da3633;color:#ffffff;font-weight:700;text-decoration:none;font-size:14px">
+    ❌ Analyse incorrecte
+  </a>
+</div>"""
+    return llm_content + buttons
 
 
 # ── HTML email template ───────────────────────────────────────────────────────
