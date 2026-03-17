@@ -13,7 +13,7 @@ Sorties dans artifacts/ :
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -33,14 +33,35 @@ FEATURE_COLS = [
     "return_mean_10", "return_std_10",
     "return_mean_20", "return_std_20",
     "rsi_14",
-    "macd", "macd_signal",
+    "macd_pct", "macd_signal_pct",
     "volume_log_change",
     "volatility",
 ]
 
-# Fenêtres temporelles
-REFERENCE_END = "2023-12-31"   # données d'entraînement → référence
-CURRENT_START = "2024-01-01"   # données récentes → à surveiller
+
+def _get_monitoring_windows():
+    """
+    Returns dynamic monitoring windows based on today's date.
+
+    Reference : last 12 months ending 90 days ago
+                (represents recent training distribution)
+    Current   : last 90 days
+                (represents what the model sees in production)
+
+    This ensures monitoring always compares a stable recent-training window
+    against the live production window, without hardcoded dates that go stale.
+    """
+    today         = datetime.now().date()
+    current_end   = today
+    current_start = today - timedelta(days=90)
+    ref_end       = current_start - timedelta(days=1)
+    ref_start     = ref_end - timedelta(days=365)
+    return (
+        str(ref_start),
+        str(ref_end),
+        str(current_start),
+        str(current_end),
+    )
 
 TICKERS_DEFAULT = [
     "AAPL", "MSFT", "GOOGL", "AMZN",
@@ -77,18 +98,25 @@ def run_monitoring(ticker: str) -> dict:
     try:
         from ml.features.feature_engineering import compute_features, fetch_ohlcv
 
+        ref_start, ref_end, curr_start, curr_end = _get_monitoring_windows()
+
         df      = fetch_ohlcv(ticker)
         df      = compute_features(df)
         df      = df.reset_index()   # DatetimeIndex → colonne "date"
 
         df_ref  = (
-            df[df["date"] <= REFERENCE_END][FEATURE_COLS]
+            df[(df["date"] >= ref_start) & (df["date"] <= ref_end)][FEATURE_COLS]
             .copy().reset_index(drop=True)
         )
         df_curr = (
-            df[df["date"] >= CURRENT_START][FEATURE_COLS]
+            df[(df["date"] >= curr_start) & (df["date"] <= curr_end)][FEATURE_COLS]
             .copy().reset_index(drop=True)
         )
+
+        summary["monitoring_windows"] = {
+            "reference": f"{ref_start} → {ref_end}",
+            "current":   f"{curr_start} → {curr_end}",
+        }
 
         if len(df_ref) < 10 or len(df_curr) < 10:
             raise ValueError(
