@@ -93,10 +93,10 @@ J+7  : {signal_7d}  — prob. hausse : {prob_7d}
 J+30 : {signal_30d} — prob. hausse : {prob_30d}
 
 Génère un email structuré avec exactement ces sections (titres en gras en html et pas en markdown) :
-1. **Résumé** (2–3 phrases) — synthèse des signaux sur {ticker}
-2. **Interprétation** — interprétation des signaux, points de vigilance, et contexte général du marché sans jargon technique
-3. **Recommandation** — INVESTIR ou PATIENTER, avec une justification en 1–2 phrases
-4. **Votre avis** — demander si l'utilisateur valide ou conteste cette analyse
+Résumé (2–3 phrases) — synthèse des signaux sur {ticker} sans jargon technique, et contexte général du marché. Par exemple, si les signaux sont mitigés, explique que les modèles sont incertains et que le marché est volatil, sans entrer dans les détails techniques de Prophet ou LSTM.
+Interprétation — interprétation des signaux, points de vigilance, et contexte général du marché sans jargon technique. Ne parle ni de Prophet ni de LSTM, mais plutôt de "modèle de tendance" et "modèle de séquences temporelles". Sois factuel et évite les spéculations.
+Recommandation — INVESTIR ou PATIENTER dans {ticker}, avec une justification en 1–2 phrases basée sur les signaux. Par exemple, si les signaux sont majoritairement positifs, recommander d'investir en expliquant que les modèles anticipent une hausse et que ça pourrait être une opportunité intéressante. Si les signaux sont mitigés ou négatifs, recommander de patienter en expliquant que les modèles sont incertains et que le marché est volatil.
+Votre avis — demander si l'utilisateur valide ou conteste cette analyse
 
 Termine impérativement avec les deux boutons HTML suivants (style inline) :
 
