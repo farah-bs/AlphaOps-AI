@@ -6,8 +6,10 @@ from typing import List, Optional, Tuple
 @dataclass
 class TrainingConfig:
     # ── Data splits ───────────────────────────────────────────────────────────
-    train_end: Optional[str] = None   # None → dynamique : aujourd'hui - 7 jours
-    val_end:   str = "2024-06-30"
+    # None → dynamique : train_end = aujourd'hui - 7 jours
+    #                    val_end   = aujourd'hui - 180 jours
+    train_end: Optional[str] = None
+    val_end:   Optional[str] = None
 
     # ── Daily model : fenêtre 60j → prédit J+1 ────────────────────────────────
     daily_window:  int = 60
@@ -26,7 +28,7 @@ class TrainingConfig:
     seasonality_mode:         str   = "multiplicative"
     daily_seasonality:        bool  = False
     weekly_seasonality:       bool  = True
-    yearly_seasonality:       bool  = False
+    yearly_seasonality:       bool  = True   # stocks have strong annual patterns
 
     series_gap_days:   int = 30
     retrain_threshold: int = 50
@@ -40,8 +42,11 @@ class TrainingConfig:
     )
 
     def __post_init__(self):
+        today = datetime.now()
         if self.train_end is None:
-            self.train_end = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            self.train_end = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+        if self.val_end is None:
+            self.val_end = (today - timedelta(days=180)).strftime("%Y-%m-%d")
 
 
 @dataclass
@@ -60,15 +65,15 @@ class LSTMConfig:
 
     # ── Entraînement ──────────────────────────────────────────────────────────
     batch_size: int   = 64
-    epochs:     int   = 30
+    epochs:     int   = 100  # more headroom; early stopping will cut short if needed
     lr:         float = 1e-3
-    patience:   int   = 10   # early stopping (val loss)
+    patience:   int   = 15   # early stopping (val loss)
 
     # ── Data splits ───────────────────────────────────────────────────────────
     # Dynamiques : train | val | test découpés à partir d'aujourd'hui
-    #   train : 2020-01-01 → aujourd'hui - 400j
-    #   val   : aujourd'hui - 400j → aujourd'hui - 200j
-    #   test  : aujourd'hui - 200j → aujourd'hui - 7j (non utilisé en prod)
+    #   train : 2020-01-01 → aujourd'hui - 365j
+    #   val   : aujourd'hui - 365j → aujourd'hui - 90j
+    #   test  : aujourd'hui - 90j  → aujourd'hui - 7j (non utilisé en prod)
     train_end: Optional[str] = None   # None → dynamique
     val_end:   Optional[str] = None   # None → dynamique
 
@@ -83,6 +88,6 @@ class LSTMConfig:
     def __post_init__(self):
         today = datetime.now()
         if self.train_end is None:
-            self.train_end = (today - timedelta(days=400)).strftime("%Y-%m-%d")
+            self.train_end = (today - timedelta(days=365)).strftime("%Y-%m-%d")
         if self.val_end is None:
-            self.val_end = (today - timedelta(days=200)).strftime("%Y-%m-%d")
+            self.val_end = (today - timedelta(days=90)).strftime("%Y-%m-%d")
