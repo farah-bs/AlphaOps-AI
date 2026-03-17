@@ -1543,7 +1543,7 @@ with tab_conseil:
                         r.raise_for_status()
                         st.success(f"Email envoyé à **{notif_email}** — le destinataire peut maintenant valider ou contester l'analyse.")
                     except requests.exceptions.ConnectionError:
-                        st.error("❌ Impossible de joindre l'agent (http://agent:8083). Vérifiez que le service est démarré.")
+                        st.error(f"❌ Impossible de joindre l'agent ({AGENT_URL}). Vérifiez que le service est démarré.")
                     except Exception as e:
                         st.error(f"Erreur agent : {e}")
 

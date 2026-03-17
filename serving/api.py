@@ -23,8 +23,16 @@ models_monthly: dict = {}
 price_stats:    dict = {}
 
 TRAIN_END   = pd.Timestamp("2023-12-31")
-RETRAIN_K   = int(os.getenv("RETRAIN_K", "20"))
+try:
+    RETRAIN_K = max(1, int(os.getenv("RETRAIN_K", "20")))
+except ValueError:
+    RETRAIN_K = 20
+
 HMAC_SECRET = os.getenv("HMAC_SECRET", "alphaops-secret-change-me")
+if HMAC_SECRET == "alphaops-secret-change-me":
+    print("WARNING: HMAC_SECRET is set to the default value. Set a strong secret in production.")
+
+_csv_lock = threading.Lock()
 
 # Tickers qui tradent 7j/7 → fréquence calendaire au lieu des jours ouvrés
 CRYPTO_TICKERS = {"BTC-USD", "ETH-USD"}
@@ -175,12 +183,12 @@ def feedback(req: FeedbackRequest):
     prod_path = DATA / "prod_data.csv"
     df_new    = pd.DataFrame([row])
 
-    if prod_path.exists() and prod_path.stat().st_size > 0:
-        df_new.to_csv(prod_path, mode="a", header=False, index=False)
-    else:
-        df_new.to_csv(prod_path, mode="w", header=True, index=False)
-
-    n_prod = len(pd.read_csv(prod_path))
+    with _csv_lock:
+        if prod_path.exists() and prod_path.stat().st_size > 0:
+            df_new.to_csv(prod_path, mode="a", header=False, index=False)
+        else:
+            df_new.to_csv(prod_path, mode="w", header=True, index=False)
+        n_prod = len(pd.read_csv(prod_path))
 
     retrained = False
     if n_prod % RETRAIN_K == 0:
@@ -250,12 +258,18 @@ def feedback_confirm(token: str, ticker: str, date: str, agreed: str, prediction
     Vérifie le token HMAC, enregistre le feedback dans prod_data.csv,
     et déclenche un réentraînement si le seuil est atteint.
     """
-    ticker     = ticker.upper()
+    ticker = ticker.upper()
+
+    if agreed.lower() not in ("true", "false"):
+        return HTMLResponse("<h2>Paramètre invalide : agreed doit être true ou false.</h2>", status_code=400)
+    if prediction.lower() not in ("true", "false"):
+        return HTMLResponse("<h2>Paramètre invalide : prediction doit être true ou false.</h2>", status_code=400)
+
     agreed_bool     = agreed.lower() == "true"
     prediction_bool = prediction.lower() == "true"
 
     if not _verify_token(ticker, date, prediction_bool, token):
-        return HTMLResponse("<h2>Lien invalide ou expiré.</h2>", status_code=403)
+        return HTMLResponse("<h2>Lien invalide.</h2>", status_code=403)
 
     # target = prediction si accord, inverse sinon
     target = prediction_bool if agreed_bool else (not prediction_bool)
@@ -271,12 +285,13 @@ def feedback_confirm(token: str, ticker: str, date: str, agreed: str, prediction
     prod_path = DATA / "prod_data.csv"
     df_new    = pd.DataFrame([row])
 
-    if prod_path.exists() and prod_path.stat().st_size > 0:
-        df_new.to_csv(prod_path, mode="a", header=False, index=False)
-    else:
-        df_new.to_csv(prod_path, mode="w", header=True, index=False)
+    with _csv_lock:
+        if prod_path.exists() and prod_path.stat().st_size > 0:
+            df_new.to_csv(prod_path, mode="a", header=False, index=False)
+        else:
+            df_new.to_csv(prod_path, mode="w", header=True, index=False)
+        n_prod = len(pd.read_csv(prod_path))
 
-    n_prod    = len(pd.read_csv(prod_path))
     retrained = False
     if n_prod % RETRAIN_K == 0:
         threading.Thread(target=_retrain_background, daemon=True).start()

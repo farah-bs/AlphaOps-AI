@@ -17,15 +17,22 @@ load_dotenv()
 
 app = FastAPI(title="AlphaOps Email Agent")
 
+_mistral_key = os.getenv("MISTRAL_API_KEY")
+if not _mistral_key:
+    print("ERROR: MISTRAL_API_KEY is not set. Agent will fail on /notify requests.", flush=True)
+
 llm = ChatMistralAI(
     model="mistral-large-latest",
-    api_key=os.getenv("MISTRAL_API_KEY"),
+    api_key=_mistral_key,
     temperature=0.4,
     max_tokens=1024,
 )
 
 HMAC_SECRET   = os.getenv("HMAC_SECRET", "alphaops-secret-change-me")
 FEEDBACK_BASE = os.getenv("FEEDBACK_BASE_URL", "http://localhost:8082")
+
+if HMAC_SECRET == "alphaops-secret-change-me":
+    print("WARNING: HMAC_SECRET is set to the default value. Set a strong secret in production.", flush=True)
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -52,7 +59,7 @@ class NotifyRequest(BaseModel):
 # ── HMAC helpers ──────────────────────────────────────────────────────────────
 
 def make_token(ticker: str, pred_date: str, prediction: bool) -> str:
-    msg = f"{ticker}:{pred_date}:{prediction}"
+    msg = f"{ticker.upper()}:{pred_date}:{prediction}"
     return hmac.new(HMAC_SECRET.encode(), msg.encode(), hashlib.sha256).hexdigest()
 
 
@@ -77,7 +84,7 @@ _EMAIL_PROMPT = ChatPromptTemplate.from_messages([
      "Tu es un analyste financier expert, concis et professionnel. "
      "Tu rédiges des emails HTML pour des investisseurs particuliers en français. "
      "Retourne UNIQUEMENT le contenu HTML du corps (pas de balises html/head/body). "
-      "Pas de formatage en markdown, ou côtes de code ou de html en markdown. "
+      "Pas de formatage en markdown, ou blocs de code ou de html en markdown. "
      "Utilise uniquement du CSS inline. Sois direct, factuel, sans jargon excessif."),
     ("human",
      """Ticker analysé : {ticker}
@@ -201,13 +208,16 @@ def _send_email(to: str, subject: str, html_body: str) -> None:
     smtp_pass = os.getenv("SMTP_PASS")
     smtp_from = os.getenv("SMTP_FROM", smtp_user)
 
+    if not smtp_user or not smtp_pass:
+        raise ValueError("SMTP_USER and SMTP_PASS must be set to send emails.")
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = smtp_from
     msg["To"]      = to
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    with smtplib.SMTP(smtp_host, smtp_port) as s:
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as s:
         s.ehlo()
         s.starttls()
         s.login(smtp_user, smtp_pass)
@@ -222,30 +232,31 @@ def health():
 
 
 @app.post("/notify")
-async def notify(req: NotifyRequest):
+def notify(req: NotifyRequest):
+    ticker     = req.ticker.upper()
     pred_date  = str(date.today())
     prediction = req.direction_daily if req.direction_daily is not None else False
-    token      = make_token(req.ticker, pred_date, prediction)
+    token      = make_token(ticker, pred_date, prediction)
 
     pred_flag = "true" if prediction else "false"
     agree_url = (
         f"{FEEDBACK_BASE}/feedback/confirm"
-        f"?token={token}&ticker={req.ticker}&date={pred_date}"
+        f"?token={token}&ticker={ticker}&date={pred_date}"
         f"&agreed=true&prediction={pred_flag}"
     )
     disagree_url = (
         f"{FEEDBACK_BASE}/feedback/confirm"
-        f"?token={token}&ticker={req.ticker}&date={pred_date}"
+        f"?token={token}&ticker={ticker}&date={pred_date}"
         f"&agreed=false&prediction={pred_flag}"
     )
 
     content   = _generate_body(req, agree_url, disagree_url, pred_date)
-    html_body = _wrap_html(req.ticker, pred_date, content)
+    html_body = _wrap_html(ticker, pred_date, content)
 
     _send_email(
         to=req.user_email,
-        subject=f"AlphaOps — Analyse {req.ticker} du {pred_date}",
+        subject=f"AlphaOps — Analyse {ticker} du {pred_date}",
         html_body=html_body,
     )
 
-    return {"status": "sent", "ticker": req.ticker, "date": pred_date, "token": token}
+    return {"status": "sent", "ticker": ticker, "date": pred_date}
