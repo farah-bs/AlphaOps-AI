@@ -192,6 +192,7 @@ services:
       - ./ml:/app/ml
       - ./artifacts:/artifacts
       - ./artifacts:/app/artifacts
+      - ./artifacts/monitoring_reports:/app/artifacts/monitoring_reports
     ports:
       - "127.0.0.1:8501:8501"
 
