@@ -29,7 +29,7 @@ for _p in (_APP_DIR, _APP_DIR.parent):
         sys.path.insert(0, str(_p))
 
 SERVING_URL = "http://serving:8080"
-N8N_WEBHOOK  = "http://n8n:5678/webhook/alphaops-alert"
+AGENT_URL   = "http://agent:8083"
 
 st.set_page_config(page_title="AlphaOps AI", page_icon="📈", layout="wide")
 
@@ -1503,22 +1503,49 @@ with tab_conseil:
             st.markdown("#### Récapitulatif directionnel Prophet")
             st.dataframe(pd.DataFrame(rows_cmp), use_container_width=True, hide_index=True)
 
-        # ── Notification n8n ──────────────────────────────────────────────────
+        # ── Notification Agent IA ─────────────────────────────────────────────
         st.divider()
-        if st.button("🔔 Notifier via n8n", key="conseil_n8n"):
-            payload = {
-                "ticker":            tk_cs,
-                "direction_daily":   dir_daily,
-                "direction_monthly": dir_month,
-                "prob_daily":        prob_daily,
-                "prob_month":        prob_month,
-            }
-            try:
-                r = requests.post(N8N_WEBHOOK, json=payload, timeout=10)
-                r.raise_for_status()
-                st.success("Notification envoyée à n8n.")
-            except Exception as e:
-                st.error(f"Erreur notification : {e}")
+        st.markdown("#### 🤖 Envoyer une analyse par email")
+        notif_email = st.text_input(
+            "Adresse email du destinataire",
+            placeholder="investisseur@exemple.com",
+            key="conseil_notif_email",
+        )
+        if st.button("📧 Envoyer l'analyse via l'Agent IA", key="conseil_agent", type="primary"):
+            if not notif_email:
+                st.warning("Veuillez saisir une adresse email.")
+            else:
+                # Inclure les signaux LSTM s'ils sont disponibles pour ce ticker
+                lstm_payload = None
+                last_lstm = st.session_state.get("last_lstm_prediction", {})
+                if last_lstm.get("ticker") == tk_cs:
+                    lstm_payload = {
+                        "prob_1d":   last_lstm.get("prob_1d",  0.5),
+                        "prob_7d":   last_lstm.get("prob_7d",  0.5),
+                        "prob_30d":  last_lstm.get("prob_30d", 0.5),
+                        "signal_1d":  last_lstm.get("signal_1d",  "NEUTRE"),
+                        "signal_7d":  last_lstm.get("signal_7d",  "NEUTRE"),
+                        "signal_30d": last_lstm.get("signal_30d", "NEUTRE"),
+                    }
+
+                payload = {
+                    "user_email":        notif_email,
+                    "ticker":            tk_cs,
+                    "direction_daily":   dir_daily,
+                    "direction_monthly": dir_month,
+                    "prob_daily":        prob_daily,
+                    "prob_month":        prob_month,
+                    "lstm":              lstm_payload,
+                }
+                with st.spinner("L'agent génère et envoie l'email…"):
+                    try:
+                        r = requests.post(f"{AGENT_URL}/notify", json=payload, timeout=60)
+                        r.raise_for_status()
+                        st.success(f"Email envoyé à **{notif_email}** — le destinataire peut maintenant valider ou contester l'analyse.")
+                    except requests.exceptions.ConnectionError:
+                        st.error("❌ Impossible de joindre l'agent (http://agent:8083). Vérifiez que le service est démarré.")
+                    except Exception as e:
+                        st.error(f"Erreur agent : {e}")
 
     else:
         st.info("👆 Sélectionnez un ticker et cliquez sur **Analyser** pour obtenir le conseil directionnel.")

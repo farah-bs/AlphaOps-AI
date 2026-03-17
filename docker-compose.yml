@@ -164,6 +164,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - HMAC_SECRET=${HMAC_SECRET}
+      - RETRAIN_K=${RETRAIN_K:-20}
     ports:
       - "127.0.0.1:8082:8080"
     volumes:
@@ -195,6 +198,27 @@ services:
       - ./artifacts/monitoring_reports:/app/artifacts/monitoring_reports
     ports:
       - "127.0.0.1:8501:8501"
+
+  # ─── LangChain Email Agent ───────────────────────────────────────────────────
+
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - FEEDBACK_BASE_URL=${FEEDBACK_BASE_URL:-http://serving:8080}
+      - HMAC_SECRET=${HMAC_SECRET:-alphaops-secret-change-me}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+    ports:
+      - "8083:8083"
 
 volumes:
   pgdata_financial:
