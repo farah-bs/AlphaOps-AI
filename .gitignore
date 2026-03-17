@@ -25,11 +25,8 @@ env/
 ########################################
 # AIRFLOW
 ########################################
-# airflow/logs/ est un dossier runtime — on ignore son contenu mais on garde
-# le .gitkeep pour que le dossier existe dès le clone (permissions Docker OK)
-airflow/logs/*
-!airflow/logs/.gitkeep
-/logs/
+airflow/logs/
+logs/
 airflow-webserver.pid
 airflow.cfg
 *.db
@@ -56,19 +53,19 @@ pgdata_*/
 
 ########################################
 # ML ARTIFACTS
-# Le dossier artifacts/ est un dossier runtime généré par le training.
-# Il n'est PAS versionné — uniquement le .gitkeep pour garantir l'existence
-# du dossier lors d'un clone (volumes Docker + permissions correctes).
 ########################################
-artifacts/*
-!artifacts/.gitkeep
+artifacts/*.pickle
+artifacts/*.pkl
+artifacts/*.joblib
+artifacts/*.onnx
+artifacts/*.pt          # Modèles PyTorch (LSTM)
+artifacts/backtest_*.csv
+artifacts/backtest_*.json
 
 ########################################
 # MLFLOW
-# Même logique : mlruns/ est runtime, on garde juste le .gitkeep.
 ########################################
-mlruns/*
-!mlruns/.gitkeep
+mlruns/
 ml/registry/REGISTRY.md
 
 ########################################
