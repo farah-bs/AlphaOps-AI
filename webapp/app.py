@@ -545,8 +545,8 @@ def _make_gauge(label: str, prob: float) -> go.Figure:
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_chat, tab_predict, tab_backtest, tab_conseil = st.tabs(
-    ["💬 Chatbot", "🔮 Prédiction", "📊 Backtest", "💡 Conseil"]
+tab_chat, tab_predict, tab_backtest, tab_conseil, tab_monitoring = st.tabs(
+    ["💬 Chatbot", "🔮 Prédiction", "📊 Backtest", "💡 Conseil", "🔍 Monitoring"]
 )
 
 # ── Onglet Chatbot ────────────────────────────────────────────────────────────
@@ -1522,3 +1522,271 @@ with tab_conseil:
 
     else:
         st.info("👆 Sélectionnez un ticker et cliquez sur **Analyser** pour obtenir le conseil directionnel.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB MONITORING — Qualité, Drift, Performance via Evidently
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=60)
+def _load_monitoring_summary(ticker: str) -> dict:
+    """Charge le résumé JSON de monitoring depuis artifacts/."""
+    path = ARTIFACTS_DIR / f"monitoring_summary_{ticker}.json"
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def _monitoring_status(section: dict) -> tuple[str, str]:
+    """
+    Retourne (badge, couleur_hex) selon l'état d'une section de monitoring.
+    badge : '🟢 OK' / '🟡 WARNING' / '🔴 ALERTE' / '⚪ N/A'
+    """
+    if not section:
+        return "⚪ N/A", "#888888"
+    if "error" in section:
+        return "⚠️ ERREUR", "#ff6b35"
+    return "🟢 OK", "#00d4ff"
+
+
+def _drift_status(drift: dict) -> tuple[str, str]:
+    """Badge spécifique pour le drift (tient compte du flag dataset_drift)."""
+    if not drift or "error" in drift:
+        return _monitoring_status(drift)
+    if drift.get("dataset_drift"):
+        share = drift.get("drift_share", 0)
+        if share >= 50:
+            return "🔴 DRIFT", "#ff4466"
+        return "🟡 DRIFT PARTIEL", "#ffcc00"
+    return "🟢 OK", "#00d4ff"
+
+
+def _perf_status(perf: dict) -> tuple[str, str]:
+    """Badge spécifique pour la performance (tient compte de la dégradation MAE)."""
+    if not perf or "error" in perf:
+        return _monitoring_status(perf)
+    deg = perf.get("mae_degradation_pct")
+    if deg is None:
+        return "🟢 OK", "#00d4ff"
+    if deg > 30:
+        return "🔴 DÉGRADÉ", "#ff4466"
+    if deg > 10:
+        return "🟡 AVERTISSEMENT", "#ffcc00"
+    return "🟢 OK", "#00d4ff"
+
+
+def _badge_html(text: str, color: str) -> str:
+    """Retourne un badge HTML coloré."""
+    return (
+        f'<span style="'
+        f'background:rgba(255,255,255,0.06);'
+        f'border:1px solid {color}55;'
+        f'border-radius:6px;'
+        f'padding:4px 10px;'
+        f'color:{color};'
+        f'font-weight:600;'
+        f'font-size:0.85rem;'
+        f'">{text}</span>'
+    )
+
+
+with tab_monitoring:
+    st.subheader("Monitoring — Qualité · Drift · Performance")
+    st.caption(
+        "Rapports **Evidently** générés automatiquement chaque jour (DAG `model_monitoring`, 18h). "
+        "Référence = données 2023 · Courant = données 2024+. "
+        "Performance basée sur le backtest walk-forward existant."
+    )
+
+    # ── Sélecteur + bouton recharger ──────────────────────────────────────────
+    mn_col1, mn_col2 = st.columns([5, 1])
+    with mn_col1:
+        mn_ticker = st.selectbox(
+            "Ticker",
+            ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "SPY", "QQQ", "BTC-USD"],
+            key="mn_ticker",
+        )
+    with mn_col2:
+        st.write("")
+        if st.button("🔄 Recharger", key="mn_reload"):
+            _load_monitoring_summary.clear()
+            st.rerun()
+
+    # ── Chargement du résumé existant ─────────────────────────────────────────
+    mn_summary = _load_monitoring_summary(mn_ticker)
+    has_summary = bool(mn_summary)
+
+    # ── Bouton de lancement en ligne (comme le backtest) ──────────────────────
+    with st.expander("⚙️ Lancer / relancer le monitoring", expanded=not has_summary):
+        st.caption(
+            "Le monitoring est automatiquement lancé chaque jour par Airflow. "
+            "Vous pouvez aussi le déclencher manuellement ici."
+        )
+        mn_launch = st.button(
+            f"▶ Lancer le monitoring — {mn_ticker}",
+            type="primary",
+            key="mn_launch",
+            use_container_width=True,
+        )
+
+    if mn_launch:
+        try:
+            from ml.monitoring.monitor import run_monitoring
+        except ImportError as exc:
+            st.error(
+                f"**Impossible d'importer `ml.monitoring` :** {exc}\n\n"
+                "Vérifiez que `./ml` est monté dans le container webapp."
+            )
+            st.stop()
+
+        with st.spinner(f"Calcul des rapports Evidently pour {mn_ticker}…"):
+            try:
+                mn_summary = run_monitoring(mn_ticker)
+                _load_monitoring_summary.clear()
+                has_summary = True
+                st.success("Monitoring terminé — rapports générés.")
+            except Exception as exc:
+                st.error(f"Erreur lors du monitoring : {exc}")
+                st.stop()
+
+    # ── Affichage résultats ───────────────────────────────────────────────────
+    if not has_summary:
+        st.info(
+            f"Aucun résumé de monitoring trouvé pour **{mn_ticker}**. "
+            "Configurez et lancez le monitoring via le panneau ci-dessus, "
+            "ou attendez le prochain passage du DAG Airflow (18h en semaine)."
+        )
+    else:
+        quality = mn_summary.get("data_quality",      {})
+        drift   = mn_summary.get("data_drift",        {})
+        perf    = mn_summary.get("model_performance", {})
+
+        st.caption(f"Dernière analyse : **{mn_summary.get('run_date', '—')}**")
+        st.divider()
+
+        # ── Badges de statut ──────────────────────────────────────────────────
+        st.markdown("#### Statut global")
+        b_col1, b_col2, b_col3 = st.columns(3)
+
+        q_badge, q_color = _monitoring_status(quality)
+        d_badge, d_color = _drift_status(drift)
+        p_badge, p_color = _perf_status(perf)
+
+        with b_col1:
+            st.markdown(
+                f"**Qualité des données**<br>{_badge_html(q_badge, q_color)}",
+                unsafe_allow_html=True,
+            )
+        with b_col2:
+            st.markdown(
+                f"**Drift des features**<br>{_badge_html(d_badge, d_color)}",
+                unsafe_allow_html=True,
+            )
+        with b_col3:
+            st.markdown(
+                f"**Performance modèle**<br>{_badge_html(p_badge, p_color)}",
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
+
+        # ── Métriques détaillées ──────────────────────────────────────────────
+        st.markdown("#### Métriques détaillées")
+        dm_c1, dm_c2, dm_c3 = st.columns(3)
+
+        with dm_c1:
+            st.markdown("**Qualité des données**")
+            if "error" in quality:
+                st.warning(quality["error"])
+            else:
+                missing = quality.get("missing_values_pct")
+                n_rows  = quality.get("n_rows")
+                n_dup   = quality.get("n_duplicates")
+                n_cst   = quality.get("n_constant")
+                if missing is not None:
+                    st.metric("Valeurs manquantes", f"{missing:.1f}%")
+                if n_rows:
+                    st.metric("Lignes analysées", f"{n_rows:,}")
+                if n_dup is not None:
+                    st.metric("Doublons", str(n_dup))
+                if n_cst is not None:
+                    st.metric("Colonnes constantes", str(n_cst))
+
+        with dm_c2:
+            st.markdown("**Drift des features**")
+            if "error" in drift:
+                st.warning(drift["error"])
+            else:
+                d_share = drift.get("drift_share")
+                d_n     = drift.get("n_drifted")
+                d_tot   = drift.get("n_features")
+                d_cols  = drift.get("drifted_columns", [])
+                if d_share is not None:
+                    st.metric(
+                        "Features driftées",
+                        f"{d_n}/{d_tot}",
+                        delta=f"{d_share:.0f}% de drift",
+                        delta_color="inverse",
+                    )
+                if d_cols:
+                    st.caption("Features en drift : " + ", ".join(
+                        f"`{c}`" for c in d_cols
+                    ))
+
+        with dm_c3:
+            st.markdown("**Performance modèle**")
+            if "error" in perf:
+                st.warning(perf["error"])
+            else:
+                mae_c = perf.get("mae_current")
+                mae_r = perf.get("mae_reference")
+                deg   = perf.get("mae_degradation_pct")
+                mape  = perf.get("mape_current")
+                if mae_c is not None:
+                    st.metric(
+                        "MAE courant",
+                        f"{mae_c:.2f} $",
+                        delta=f"réf : {mae_r:.2f} $" if mae_r else None,
+                    )
+                if deg is not None:
+                    sign = "+" if deg > 0 else ""
+                    delta_color = "inverse" if deg > 0 else "normal"
+                    st.metric(
+                        "Dégradation MAE",
+                        f"{sign}{deg:.1f}%",
+                        delta_color=delta_color,
+                    )
+                if mape is not None:
+                    st.metric("MAPE courant", f"{mape:.2f}%")
+
+        st.divider()
+
+        # ── Téléchargement des rapports HTML Evidently ────────────────────────
+        st.markdown("#### Rapports HTML complets (Evidently)")
+        reports_dir = ARTIFACTS_DIR / "monitoring_reports"
+        dl_c1, dl_c2, dl_c3 = st.columns(3)
+
+        for col, label, fname in [
+            (dl_c1, "⬇ Qualité",      f"quality_{mn_ticker}.html"),
+            (dl_c2, "⬇ Drift",         f"drift_{mn_ticker}.html"),
+            (dl_c3, "⬇ Performance",   f"performance_{mn_ticker}.html"),
+        ]:
+            path = reports_dir / fname
+            with col:
+                if path.exists():
+                    st.download_button(
+                        label=label,
+                        data=path.read_bytes(),
+                        file_name=fname,
+                        mime="text/html",
+                        use_container_width=True,
+                        key=f"dl_{fname}",
+                    )
+                else:
+                    st.button(label, disabled=True, use_container_width=True,
+                              key=f"dl_disabled_{fname}")
+
+        # ── Détails JSON bruts ────────────────────────────────────────────────
+        with st.expander("🔎 Détails JSON bruts", expanded=False):
+            st.json(mn_summary)
