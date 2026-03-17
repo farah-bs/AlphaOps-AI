@@ -1364,7 +1364,7 @@ with tab_conseil:
         cs_btn = st.button("📡 Analyser", use_container_width=True, type="primary", key="conseil_btn")
 
     if cs_btn:
-        with st.spinner(f"Récupération des prévisions Prophet pour {cs_ticker}…"):
+        with st.spinner(f"Récupération des prévisions Prophet + LSTM pour {cs_ticker}…"):
             cs_data = {}
             for cs_mode in ("daily", "monthly"):
                 try:
@@ -1381,9 +1381,38 @@ with tab_conseil:
                 except Exception as e:
                     st.warning(f"⚠️ Impossible de charger le modèle '{cs_mode}' pour {cs_ticker} : {e}")
 
+            # Fetch LSTM predictions
+            cs_lstm = None
+            try:
+                r = requests.post(
+                    f"{SERVING_URL}/predict/lstm",
+                    json={"ticker": cs_ticker},
+                    timeout=30,
+                )
+                r.raise_for_status()
+                lstm_data = r.json()
+                cs_lstm = {
+                    "ticker":     cs_ticker,
+                    "prob_1d":    lstm_data.get("prob_up_1d",  0.5),
+                    "prob_7d":    lstm_data.get("prob_up_7d",  0.5),
+                    "prob_30d":   lstm_data.get("prob_up_30d", 0.5),
+                    "signal_1d":  lstm_data.get("signal_1d",  "NEUTRE"),
+                    "signal_7d":  lstm_data.get("signal_7d",  "NEUTRE"),
+                    "signal_30d": lstm_data.get("signal_30d", "NEUTRE"),
+                }
+                st.session_state["last_lstm_prediction"] = cs_lstm
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None and e.response.status_code == 404:
+                    st.warning(f"⚠️ Aucun modèle LSTM trouvé pour **{cs_ticker}**.")
+                else:
+                    st.warning(f"⚠️ Erreur LSTM : {e}")
+            except Exception as e:
+                st.warning(f"⚠️ LSTM indisponible : {e}")
+
             st.session_state["last_conseil"] = {
                 "ticker": cs_ticker,
                 "data":   cs_data,
+                "lstm":   cs_lstm,
             }
 
     if "last_conseil" in st.session_state:
@@ -1391,6 +1420,11 @@ with tab_conseil:
         tk_cs    = cs["ticker"]
         cs_daily = cs["data"].get("daily")
         cs_month = cs["data"].get("monthly")
+        cs_lstm  = cs.get("lstm")
+        if cs_lstm is None:
+            _cached = st.session_state.get("last_lstm_prediction", {})
+            if _cached.get("ticker") == tk_cs:
+                cs_lstm = _cached
 
         # Extraire les DataFrames
         df_daily = None
@@ -1421,28 +1455,46 @@ with tab_conseil:
         def _dir_label(d) -> str:
             return "—" if d is None else ("▲ HAUSSE" if d else "▼ BAISSE")
 
-        def _consensus_label(d1, d2) -> str:
-            if d1 is None and d2 is None:
+        def _consensus_label(d1, d2, lstm_sig=None) -> str:
+            signals = []
+            if d1 is not None:
+                signals.append(d1)
+            if d2 is not None:
+                signals.append(d2)
+            if lstm_sig is not None:
+                signals.append(lstm_sig > 0.55)
+            if not signals:
                 return "—"
-            if d1 == d2:
-                return ("▲ HAUSSIER" if d1 else "▼ BAISSIER") + " ✅"
+            bullish = sum(1 for s in signals if s)
+            if bullish == len(signals):
+                return "▲ HAUSSIER ✅"
+            if bullish == 0:
+                return "▼ BAISSIER ✅"
             return "⚡ MIXTE"
 
+        lstm_prob_1d = cs_lstm["prob_1d"] if cs_lstm else None
+
         # ── Métriques direction ───────────────────────────────────────────────
-        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1, mc2, mc3, mc4, mc5 = st.columns(5)
         with mc1:
             st.metric("Ticker", tk_cs)
         with mc2:
-            st.metric("Tendance J+1", _dir_label(dir_daily))
+            st.metric("Prophet J+1", _dir_label(dir_daily))
         with mc3:
-            st.metric("Tendance J+30", _dir_label(dir_month))
+            st.metric("Prophet J+30", _dir_label(dir_month))
         with mc4:
-            st.metric("Consensus", _consensus_label(dir_daily, dir_month))
+            if cs_lstm:
+                st.metric("LSTM J+1", cs_lstm["signal_1d"])
+            else:
+                st.metric("LSTM J+1", "—")
+        with mc5:
+            st.metric("Consensus", _consensus_label(dir_daily, dir_month, lstm_prob_1d))
 
         st.divider()
 
-        # ── Jauges Prophet (direction, pas de prix) ───────────────────────────
+        # ── Jauges Prophet ────────────────────────────────────────────────────
         if prob_daily is not None or prob_month is not None:
+            st.markdown("**Prophet**")
             gd1, gd2 = st.columns(2)
             with gd1:
                 if prob_daily is not None:
@@ -1458,6 +1510,28 @@ with tab_conseil:
                         use_container_width=True,
                         config={"displayModeBar": False},
                     )
+
+        # ── Jauges LSTM ───────────────────────────────────────────────────────
+        if cs_lstm:
+            st.markdown("**LSTM**")
+            gl1, gl2, gl3 = st.columns(3)
+            with gl1:
+                st.plotly_chart(
+                    _make_gauge("Prob. hausse J+1 (LSTM)", cs_lstm["prob_1d"]),
+                    use_container_width=True, config={"displayModeBar": False},
+                )
+            with gl2:
+                st.plotly_chart(
+                    _make_gauge("Prob. hausse J+7 (LSTM)", cs_lstm["prob_7d"]),
+                    use_container_width=True, config={"displayModeBar": False},
+                )
+            with gl3:
+                st.plotly_chart(
+                    _make_gauge("Prob. hausse J+30 (LSTM)", cs_lstm["prob_30d"]),
+                    use_container_width=True, config={"displayModeBar": False},
+                )
+
+        if prob_daily is not None or prob_month is not None or cs_lstm:
             st.caption(
                 "🔵 Cyan = HAUSSE (prob > 55 %)  ·  "
                 "🟠 Orange = BAISSE (prob < 45 %)  ·  "
@@ -1543,7 +1617,7 @@ with tab_conseil:
                         r.raise_for_status()
                         st.success(f"Email envoyé à **{notif_email}** — le destinataire peut maintenant valider ou contester l'analyse.")
                     except requests.exceptions.ConnectionError:
-                        st.error("❌ Impossible de joindre l'agent (http://agent:8083). Vérifiez que le service est démarré.")
+                        st.error(f"❌ Impossible de joindre l'agent ({AGENT_URL}). Vérifiez que le service est démarré.")
                     except Exception as e:
                         st.error(f"Erreur agent : {e}")
 

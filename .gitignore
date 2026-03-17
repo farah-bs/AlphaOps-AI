@@ -97,3 +97,5 @@ data/prod_data.csv
 ml/features/features.txt
 startup.txt
 notes.txt
+
+artifacts/*

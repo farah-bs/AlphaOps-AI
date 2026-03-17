@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ml.features.feature_engineering import fetch_ohlcv, compute_features
 from ml.training.config import TrainingConfig
-from ml.training.train import _build_training_df, _fit_prophet
+from ml.training.train import _to_prophet_df, _fit_prophet
 
 warnings.filterwarnings("ignore")
 
@@ -52,15 +52,13 @@ def retrain(cfg: TrainingConfig = CFG) -> dict:
             print(f"    SKIP — pas assez de lignes ({len(df_raw)})")
             continue
 
-        # Daily (fenêtres 60j)
-        df_d = _build_training_df(df_raw, cfg.daily_window)
-        print(f"    daily   : {len(df_d):,} lignes")
-        models_daily[ticker] = _fit_prophet(df_d)
+        # Both models use full continuous time series (same as train.py)
+        df_prophet = _to_prophet_df(df_raw)
+        print(f"    daily   : {len(df_prophet):,} lignes (série continue)")
+        models_daily[ticker]   = _fit_prophet(df_prophet)
 
-        # Monthly (fenêtres 180j)
-        df_m = _build_training_df(df_raw, cfg.monthly_window)
-        print(f"    monthly : {len(df_m):,} lignes")
-        models_monthly[ticker] = _fit_prophet(df_m)
+        print(f"    monthly : {len(df_prophet):,} lignes (série continue)")
+        models_monthly[ticker] = _fit_prophet(df_prophet)
 
     if not models_daily:
         raise RuntimeError("Aucun modèle réentraîné — la DB est-elle démarrée ?")

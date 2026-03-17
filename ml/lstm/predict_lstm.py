@@ -58,6 +58,8 @@ def get_lstm_prediction(ticker: str) -> dict:
             "Lancez d'abord le DAG lstm_training."
         )
     if not sc_path.exists():
+        sc_path = arts / "scaler.pickle"
+    if not sc_path.exists():
         raise FileNotFoundError(f"Scaler LSTM introuvable : {sc_path}")
 
     # ── Chargement modèle ─────────────────────────────────────────────────────

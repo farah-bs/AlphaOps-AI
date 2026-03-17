@@ -15,25 +15,23 @@ ARTIFACTS = ROOT / "artifacts"
 ARTIFACTS.mkdir(exist_ok=True)
 
 
-def _build_training_df(df: pd.DataFrame, window: int) -> pd.DataFrame:
+def _to_prophet_df(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Concatène les fenêtres non-overlapping de `window` jours en un seul
-    DataFrame Prophet (ds, y) avec les vraies dates calendaires.
+    Converts a full OHLCV DataFrame (DatetimeIndex) to Prophet format (ds, y).
 
-    step = window → zéro overlap garanti entre fenêtres.
+    Uses the complete continuous time series — Prophet needs the full history
+    to correctly estimate trend, changepoints, and seasonality components.
+    Fragmented/windowed input would create artificial discontinuities and
+    degrade forecast quality.
     """
-    frames = []
-    close  = df["adj_close"].values
-    dates  = df.index
-
-    for start in range(0, len(df) - window, window):
-        end = start + window
-        frames.append(pd.DataFrame({
-            "ds": dates[start:end],
-            "y":  close[start:end],
-        }))
-
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    prices = df["adj_close"].copy()
+    if "close_price" in df.columns:
+        prices = prices.fillna(df["close_price"])
+    prices = prices.replace([float("inf"), float("-inf")], float("nan")).dropna()
+    return pd.DataFrame({
+        "ds": pd.to_datetime(prices.index),
+        "y":  prices.values,
+    }).reset_index(drop=True)
 
 
 def _fit_prophet(df: pd.DataFrame, cfg: TrainingConfig = None) -> Prophet:
@@ -74,16 +72,15 @@ def _train_ticker(args: tuple) -> tuple:
     ticker, df_train, cfg = args
 
     # ── Daily model ────────────────────────────────────────────────────────
-    df_d       = _build_training_df(df_train, cfg.daily_window)
-    n_d        = len(df_d) // cfg.daily_window
-    print(f"  [{ticker}] daily   : {len(df_d):,} lignes — {n_d} fenêtres de {cfg.daily_window}j")
-    model_d    = _fit_prophet(df_d, cfg)
+    df_d    = _to_prophet_df(df_train)
+    print(f"  [{ticker}] daily   : {len(df_d):,} lignes (série continue)")
+    model_d = _fit_prophet(df_d, cfg)
 
     # ── Monthly model ──────────────────────────────────────────────────────
-    df_m       = _build_training_df(df_train, cfg.monthly_window)
-    n_m        = len(df_m) // cfg.monthly_window
-    print(f"  [{ticker}] monthly : {len(df_m):,} lignes — {n_m} fenêtres de {cfg.monthly_window}j")
-    model_m    = _fit_prophet(df_m, cfg)
+    # Same full time series — Prophet uses all history for both horizons
+    df_m    = df_d.copy()
+    print(f"  [{ticker}] monthly : {len(df_m):,} lignes (série continue)")
+    model_m = _fit_prophet(df_m, cfg)
 
     mean_ = float(df_train["adj_close"].mean())
     std_  = float(df_train["adj_close"].std())

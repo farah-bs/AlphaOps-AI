@@ -11,7 +11,7 @@ FEATURE_COLS = [
     "return_mean_10", "return_std_10",
     "return_mean_20", "return_std_20",
     "rsi_14",
-    "macd", "macd_signal",
+    "macd_pct", "macd_signal_pct",   
     "volume_log_change",
     "volatility",
 ]
@@ -53,8 +53,10 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["rsi_14"] = ta.momentum.RSIIndicator(close=close, window=14).rsi()
 
     macd_ind = ta.trend.MACD(close=close)
-    df["macd"] = macd_ind.macd()
-    df["macd_signal"] = macd_ind.macd_signal()
+    # Normalize by price so the feature is scale-invariant across different price levels
+    # and time periods (prevents distribution shift when stock price changes significantly)
+    df["macd_pct"]        = macd_ind.macd()        / close
+    df["macd_signal_pct"] = macd_ind.macd_signal() / close
 
     df["volume_log_change"] = np.log(df["volume"] / df["volume"].shift(1))
 
