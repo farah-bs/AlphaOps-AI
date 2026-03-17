@@ -53,8 +53,31 @@ jobs:
             cd /srv/alphaops
 
             echo "[1/4] Pull du code..."
+
+            # ── Protection des artifacts avant git reset ────────────────────
+            # artifacts/ n'est plus versionné (runtime-only). git reset --hard
+            # supprimerait les fichiers qui étaient trackés dans l'ancienne
+            # version. On les sauvegarde, on reset, on les restaure.
+            ARTS_BAK=""
+            if [ -d ./artifacts ]; then
+              ARTS_BAK="/tmp/alphaops_arts_$(date +%s)"
+              cp -a ./artifacts "$ARTS_BAK"
+              echo "  → artifacts/ sauvegardés dans $ARTS_BAK"
+            fi
+
             git fetch origin
             git reset --hard origin/main
+
+            # Restaurer les artifacts après le reset
+            if [ -n "$ARTS_BAK" ] && [ -d "$ARTS_BAK" ]; then
+              # cp -n : ne pas écraser si git a restauré un fichier plus récent
+              cp -rn "$ARTS_BAK"/. ./artifacts/ 2>/dev/null || true
+              rm -rf "$ARTS_BAK"
+              echo "  → artifacts/ restaurés"
+            fi
+
+            # Garantir que les dossiers runtime existent avec les bonnes permissions
+            mkdir -p artifacts mlruns airflow/logs
 
             echo "[2/4] Mise à jour du .env..."
             cat > .env <<'EOF'
