@@ -1,19 +1,553 @@
+import json
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 from dotenv import load_dotenv
+from sqlalchemy import text
 
 load_dotenv()
 
 from src.agents.agent import ask_agent
+from src.db.connection import get_engine
+
+# Chemin vers les artifacts de backtest (robuste local + Docker)
+# webapp/app.py → parent = webapp/ → parent.parent = racine projet → artifacts/
+ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "artifacts"
+
+# Rend ml.* importable :
+#   Docker  : app.py est /app/app.py  → /app contient /app/ml/
+#   Local   : app.py est .../webapp/app.py → parent.parent = racine projet
+_APP_DIR = Path(__file__).resolve().parent
+for _p in (_APP_DIR, _APP_DIR.parent):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 SERVING_URL = "http://serving:8080"
 AGENT_URL   = "http://agent:8083"
 
 st.set_page_config(page_title="AlphaOps AI", page_icon="📈", layout="wide")
+
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] { font-size: 1.4rem; font-weight: 700; }
+[data-testid="stMetricLabel"] { color: rgba(255,255,255,0.5); font-size: 0.75rem; }
+div[data-testid="stMetric"] {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 14px 18px;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("📈 AlphaOps AI")
 
-tab_chat, tab_predict = st.tabs(["Chatbot", "Prédiction"])
+# ── Helpers DB ────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def fetch_history(ticker: str, days: int = 90) -> pd.DataFrame:
+    engine = get_engine()
+    query = text("""
+        SELECT date, open_price, high_price, low_price, adj_close, volume
+        FROM fact_ohlcv
+        WHERE symbol = :symbol
+        ORDER BY date DESC
+        LIMIT :days
+    """)
+    with engine.connect() as conn:
+        df = pd.read_sql(query, conn, params={"symbol": ticker, "days": days})
+    df["date"] = pd.to_datetime(df["date"])
+    return df.sort_values("date").reset_index(drop=True)
+
+
+# ── Chart 2D ──────────────────────────────────────────────────────────────────
+
+def make_2d_chart(
+    df_hist: pd.DataFrame,
+    df_pred: pd.DataFrame,
+    ticker: str,
+    direction: bool,
+) -> go.Figure:
+    clr_hist  = "#00d4ff"
+    clr_pred  = "#ff6b35"
+    title_clr = "#00ff88" if direction else "#ff4466"
+    arrow     = "▲" if direction else "▼"
+    label     = "HAUSSE" if direction else "BAISSE"
+
+    fig = go.Figure()
+
+    # Fourchette historique H-L (zone)
+    fig.add_trace(go.Scatter(
+        x=pd.concat([df_hist["date"], df_hist["date"].iloc[::-1]]),
+        y=pd.concat([df_hist["high_price"], df_hist["low_price"].iloc[::-1]]),
+        fill="toself",
+        fillcolor="rgba(0, 212, 255, 0.07)",
+        line=dict(color="rgba(0,0,0,0)"),
+        name="Fourchette H/L",
+        hoverinfo="skip",
+    ))
+
+    # Ligne des prix réels
+    fig.add_trace(go.Scatter(
+        x=df_hist["date"],
+        y=df_hist["adj_close"],
+        name="Prix réel",
+        line=dict(color=clr_hist, width=2),
+        mode="lines",
+        hovertemplate="<b>%{x|%d %b %Y}</b><br>%{y:,.2f} $<extra>Historique</extra>",
+    ))
+
+    # Zone d'incertitude forecast
+    dates_fwd = df_pred["date"].tolist()
+    fig.add_trace(go.Scatter(
+        x=dates_fwd + dates_fwd[::-1],
+        y=df_pred["yhat_upper"].tolist() + df_pred["yhat_lower"].tolist()[::-1],
+        fill="toself",
+        fillcolor="rgba(255, 107, 53, 0.18)",
+        line=dict(color="rgba(0,0,0,0)"),
+        name="Incertitude",
+        hoverinfo="skip",
+    ))
+
+    # Ligne forecast
+    fig.add_trace(go.Scatter(
+        x=df_pred["date"],
+        y=df_pred["yhat"],
+        name="Prévision",
+        line=dict(color=clr_pred, width=2.5, dash="dash"),
+        mode="lines+markers",
+        marker=dict(size=6, color=clr_pred, symbol="circle"),
+        customdata=np.stack([df_pred["yhat_lower"], df_pred["yhat_upper"]], axis=-1),
+        hovertemplate=(
+            "<b>%{x|%d %b %Y}</b><br>"
+            "Prévision : <b>%{y:,.2f} $</b><br>"
+            "↓ %{customdata[0]:,.2f}  |  ↑ %{customdata[1]:,.2f}"
+            "<extra>Forecast</extra>"
+        ),
+    ))
+
+    # Ligne verticale aujourd'hui
+    today_str = pd.Timestamp.today().normalize().isoformat()
+    fig.add_shape(
+        type="line",
+        x0=today_str, x1=today_str,
+        y0=0, y1=1, yref="paper",
+        line=dict(color="rgba(255,255,255,0.2)", dash="dot", width=1.5),
+    )
+    fig.add_annotation(
+        x=today_str, y=1, yref="paper",
+        text="  Aujourd'hui",
+        showarrow=False,
+        font=dict(color="rgba(255,255,255,0.35)", size=11),
+        xanchor="left",
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text=f"<b>{ticker}</b>  <span style='color:{title_clr}'>{arrow} {label}</span>",
+            font=dict(size=20),
+            x=0.01,
+        ),
+        xaxis=dict(
+            title="Date",
+            showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+            zeroline=False,
+        ),
+        yaxis=dict(
+            title="Prix (USD)",
+            showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+            zeroline=False,
+        ),
+        hovermode="x unified",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02,
+            xanchor="right", x=1,
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        height=440,
+        plot_bgcolor="rgba(8,12,24,0.9)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=55, r=20, t=80, b=50),
+    )
+    return fig
+
+
+# ── Chart 3D LSTM ─────────────────────────────────────────────────────────────
+
+def _make_lstm_3d_chart(
+    ticker: str,
+    prob_1d: float,
+    prob_7d: float,
+    prob_30d: float,
+    df_hist: pd.DataFrame,
+) -> go.Figure:
+    """
+    Surface 3D combinée :
+      - Section gauche  : tunnel historique prix (low/close/high)  → dégradé cyan
+      - Section droite  : cône probabiliste LSTM (J+1 / J+7 / J+30)
+        → couleur cyan (HAUSSE) ou orange (BAISSE) selon le signal moyen
+    Le tout connecté par un plan «Aujourd'hui» semi-transparent.
+    """
+    fig = go.Figure()
+
+    n_hist = len(df_hist)
+    y_lvl  = np.array([0.0, 0.5, 1.0])
+    x_hist = np.arange(n_hist, dtype=float)
+    last_close = float(df_hist["adj_close"].iloc[-1])
+
+    # Volatilité quotidienne historique (pour l'incertitude forward)
+    returns   = df_hist["adj_close"].pct_change().dropna()
+    daily_vol = float(returns.std()) if len(returns) > 1 else 0.01
+
+    # ── Surface historique ──────────────────────────────────────────────────
+    z_hist = np.array([
+        df_hist["low_price"].values,
+        df_hist["adj_close"].values,
+        df_hist["high_price"].values,
+    ])
+    fig.add_trace(go.Surface(
+        x=x_hist, y=y_lvl, z=z_hist,
+        colorscale=[
+            [0.0, "#050d1f"], [0.25, "#0b2a52"],
+            [0.6,  "#005f99"], [1.0,  "#00d4ff"],
+        ],
+        opacity=0.75,
+        showscale=False,
+        name="Historique",
+        hovertemplate="T=%{x:.0f}<br>Prix=%{z:,.2f} $<extra>Historique</extra>",
+    ))
+    # Spine historique
+    fig.add_trace(go.Scatter3d(
+        x=x_hist, y=np.full(n_hist, 0.5), z=df_hist["adj_close"].values,
+        mode="lines",
+        line=dict(color="#00d4ff", width=5),
+        name="Clôture réelle",
+    ))
+
+    # ── Cône LSTM (scénario probabiliste) ──────────────────────────────────
+    # Points : [aujourd'hui=0, J+1, J+7, J+30]
+    horizons_days = np.array([0,    1,       7,       30])
+    probs_all     = np.array([0.5,  prob_1d, prob_7d, prob_30d])
+
+    # Drift de prix attendu = (prob - 0.5) * 2 * daily_vol par jour (log-drift)
+    drifts  = (probs_all - 0.5) * 2 * daily_vol
+    centers = last_close * np.exp(drifts * horizons_days)
+
+    # Enveloppe d'incertitude croissante (σ√t)
+    unc = last_close * daily_vol * np.sqrt(np.maximum(horizons_days, 0.1))
+
+    x_fwd = (n_hist - 1) + horizons_days.astype(float)
+    z_fwd = np.array([centers - unc, centers, centers + unc])
+
+    avg_prob = (prob_1d + prob_7d + prob_30d) / 3
+    if avg_prob > 0.55:
+        lstm_cs = [[0.0, "#002a1a"], [0.4, "#006644"], [0.7, "#00bb77"], [1.0, "#00d4ff"]]
+        spine_color = "#00d4ff"
+    elif avg_prob < 0.45:
+        lstm_cs = [[0.0, "#1a0600"], [0.4, "#6b2000"], [0.7, "#cc4a00"], [1.0, "#ff6b35"]]
+        spine_color = "#ff6b35"
+    else:
+        lstm_cs = [[0.0, "#111111"], [0.5, "#555555"], [1.0, "#aaaaaa"]]
+        spine_color = "#aaaaaa"
+
+    fig.add_trace(go.Surface(
+        x=x_fwd, y=y_lvl, z=z_fwd,
+        colorscale=lstm_cs,
+        opacity=0.88,
+        showscale=False,
+        name="Cône LSTM",
+        hovertemplate="T=%{x:.0f}<br>%{z:,.2f} $<extra>Scénario LSTM</extra>",
+    ))
+    # Spine LSTM (médian)
+    fig.add_trace(go.Scatter3d(
+        x=x_fwd, y=np.full(len(x_fwd), 0.5), z=centers,
+        mode="lines",
+        line=dict(color=spine_color, width=6),
+        name="Forecast médian",
+    ))
+    # Points clés J+1, J+7, J+30 avec labels
+    key_x    = [n_hist + d - 1 for d in [1, 7, 30]]
+    key_z    = [centers[1], centers[2], centers[3]]
+    key_cols = [_gauge_color(prob_1d), _gauge_color(prob_7d), _gauge_color(prob_30d)]
+    key_lbls = [
+        f"J+1 {prob_1d*100:.0f}%",
+        f"J+7 {prob_7d*100:.0f}%",
+        f"J+30 {prob_30d*100:.0f}%",
+    ]
+    fig.add_trace(go.Scatter3d(
+        x=key_x, y=[0.5, 0.5, 0.5], z=key_z,
+        mode="markers+text",
+        marker=dict(size=11, color=key_cols, symbol="diamond",
+                    line=dict(color="white", width=1)),
+        text=key_lbls,
+        textposition="top center",
+        textfont=dict(color="white", size=11),
+        name="Points LSTM",
+    ))
+
+    # ── Plan de séparation «Aujourd'hui» ────────────────────────────────────
+    p_min = float(df_hist["low_price"].min()) * 0.97
+    p_max = float(df_hist["high_price"].max()) * 1.03
+    sep_x = float(n_hist - 1)
+    fig.add_trace(go.Mesh3d(
+        x=[sep_x, sep_x, sep_x, sep_x],
+        y=[0.0, 1.0, 1.0, 0.0],
+        z=[p_min, p_min, p_max, p_max],
+        i=[0], j=[1], k=[2],
+        color="white", opacity=0.07,
+        showlegend=False, hoverinfo="skip",
+    ))
+
+    sig_label = "HAUSSE ▲" if avg_prob > 0.55 else ("BAISSE ▼" if avg_prob < 0.45 else "NEUTRE —")
+    sig_color  = "#00d4ff" if avg_prob > 0.55 else ("#ff6b35" if avg_prob < 0.45 else "#888888")
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text=(
+                f"<b>{ticker}</b> — Tunnel de prix + Cône LSTM  "
+                f"<span style='color:{sig_color}'>{sig_label}</span>"
+            ),
+            font=dict(size=17), x=0.01,
+        ),
+        scene=dict(
+            xaxis=dict(title="Temps (index)",
+                       showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+                       backgroundcolor="rgba(5,8,18,0.6)", showspikes=False),
+            yaxis=dict(title="Niveau canal",
+                       tickvals=[0.0, 0.5, 1.0], ticktext=["Bas", "Médian", "Haut"],
+                       showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+                       backgroundcolor="rgba(5,8,18,0.6)", showspikes=False),
+            zaxis=dict(title="Prix (USD)",
+                       showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+                       backgroundcolor="rgba(5,8,18,0.6)", showspikes=False),
+            camera=dict(eye=dict(x=1.6, y=-1.9, z=0.85)),
+            bgcolor="rgba(0,0,0,0)",
+            aspectmode="manual",
+            aspectratio=dict(x=2.5, y=0.7, z=1.0),
+        ),
+        paper_bgcolor="rgba(0,0,0,0)",
+        height=600,
+        margin=dict(l=0, r=0, t=65, b=0),
+        legend=dict(bgcolor="rgba(0,0,0,0.4)",
+                    bordercolor="rgba(255,255,255,0.1)",
+                    borderwidth=1, font=dict(size=12)),
+    )
+    return fig
+
+
+# ── Chart 3D ──────────────────────────────────────────────────────────────────
+
+def make_3d_chart(
+    df_hist: pd.DataFrame,
+    df_pred: pd.DataFrame,
+    ticker: str,
+) -> go.Figure:
+    """
+    Surface 3D "tunnel de prix" :
+      X = index temporel
+      Y = niveau canal  (0 = bas, 0.5 = médian, 1 = haut)
+      Z = prix (USD)    ← la hauteur de la surface
+
+    Section historique  → low / adj_close / high       (bleu)
+    Section forecast    → yhat_lower / yhat / yhat_upper (orange)
+    """
+    fig = go.Figure()
+
+    n_hist = len(df_hist)
+    n_pred = len(df_pred)
+    x_hist = np.arange(n_hist, dtype=float)
+    x_pred = np.arange(n_hist, n_hist + n_pred, dtype=float)
+    y_lvl  = np.array([0.0, 0.5, 1.0])
+
+    # ── Surface historique ──────────────────────────────────────────────────
+    z_hist = np.array([
+        df_hist["low_price"].values,
+        df_hist["adj_close"].values,
+        df_hist["high_price"].values,
+    ])  # shape (3, n_hist)
+
+    fig.add_trace(go.Surface(
+        x=x_hist,
+        y=y_lvl,
+        z=z_hist,
+        colorscale=[
+            [0.0,  "#050d1f"],
+            [0.25, "#0b2a52"],
+            [0.6,  "#005f99"],
+            [1.0,  "#00d4ff"],
+        ],
+        opacity=0.82,
+        showscale=False,
+        name="Historique",
+        hovertemplate="T=%{x:.0f}<br>Prix=%{z:,.2f} $<extra>Historique</extra>",
+    ))
+
+    # Ligne spine historique (clôture réelle)
+    fig.add_trace(go.Scatter3d(
+        x=x_hist,
+        y=np.full(n_hist, 0.5),
+        z=df_hist["adj_close"].values,
+        mode="lines",
+        line=dict(color="#00d4ff", width=5),
+        name="Clôture réelle",
+    ))
+
+    # ── Surface forecast ────────────────────────────────────────────────────
+    z_pred = np.array([
+        df_pred["yhat_lower"].values,
+        df_pred["yhat"].values,
+        df_pred["yhat_upper"].values,
+    ])  # shape (3, n_pred)
+
+    fig.add_trace(go.Surface(
+        x=x_pred,
+        y=y_lvl,
+        z=z_pred,
+        colorscale=[
+            [0.0,  "#1a0600"],
+            [0.25, "#6b2000"],
+            [0.6,  "#cc4a00"],
+            [1.0,  "#ff6b35"],
+        ],
+        opacity=0.85,
+        showscale=False,
+        name="Prévision",
+        hovertemplate="T=%{x:.0f}<br>Prix=%{z:,.2f} $<extra>Forecast</extra>",
+    ))
+
+    # Ligne spine forecast (yhat)
+    fig.add_trace(go.Scatter3d(
+        x=x_pred,
+        y=np.full(n_pred, 0.5),
+        z=df_pred["yhat"].values,
+        mode="lines+markers",
+        line=dict(color="#ff6b35", width=5),
+        marker=dict(size=4, color="#ff6b35"),
+        name="Forecast médian",
+    ))
+
+    # ── Plan de séparation "aujourd'hui" ────────────────────────────────────
+    sep_x = float(n_hist - 1)
+    p_min = min(float(df_hist["low_price"].min()), float(df_pred["yhat_lower"].min()))
+    p_max = max(float(df_hist["high_price"].max()), float(df_pred["yhat_upper"].max()))
+
+    fig.add_trace(go.Mesh3d(
+        x=[sep_x, sep_x, sep_x, sep_x],
+        y=[0.0, 1.0, 1.0, 0.0],
+        z=[p_min, p_min, p_max, p_max],
+        i=[0], j=[1], k=[2],
+        color="white",
+        opacity=0.08,
+        name="Aujourd'hui",
+        showlegend=False,
+        hoverinfo="skip",
+    ))
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text=f"<b>{ticker}</b> — Tunnel de prix 3D",
+            font=dict(size=17),
+            x=0.01,
+        ),
+        scene=dict(
+            xaxis=dict(
+                title="Temps (index)",
+                showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+                backgroundcolor="rgba(5,8,18,0.6)",
+                showspikes=False,
+            ),
+            yaxis=dict(
+                title="Niveau canal",
+                tickvals=[0.0, 0.5, 1.0],
+                ticktext=["Bas", "Médian", "Haut"],
+                showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+                backgroundcolor="rgba(5,8,18,0.6)",
+                showspikes=False,
+            ),
+            zaxis=dict(
+                title="Prix (USD)",
+                showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+                backgroundcolor="rgba(5,8,18,0.6)",
+                showspikes=False,
+            ),
+            camera=dict(eye=dict(x=1.6, y=-1.9, z=0.85)),
+            bgcolor="rgba(0,0,0,0)",
+            aspectmode="manual",
+            aspectratio=dict(x=2.5, y=0.7, z=1.0),
+        ),
+        paper_bgcolor="rgba(0,0,0,0)",
+        height=580,
+        margin=dict(l=0, r=0, t=60, b=0),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0.4)",
+            bordercolor="rgba(255,255,255,0.1)",
+            borderwidth=1,
+            font=dict(size=12),
+        ),
+    )
+    return fig
+
+
+# ── Helpers gauges et couleurs ────────────────────────────────────────────────
+
+def _gauge_color(prob: float) -> str:
+    """Couleur selon la probabilité : cyan (hausse), orange (baisse), gris (neutre)."""
+    if prob > 0.55:
+        return "#00d4ff"
+    if prob < 0.45:
+        return "#ff6b35"
+    return "#888888"
+
+
+def _make_gauge(label: str, prob: float) -> go.Figure:
+    """Gauge Plotly Indicator pour une proba directionnelle."""
+    color = _gauge_color(prob)
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=round(prob * 100, 1),
+        number={"suffix": "%", "font": {"size": 28, "color": color}},
+        title={"text": label, "font": {"size": 14, "color": "rgba(255,255,255,0.7)"}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": "rgba(255,255,255,0.3)"},
+            "bar":  {"color": color, "thickness": 0.25},
+            "bgcolor": "rgba(255,255,255,0.04)",
+            "borderwidth": 0,
+            "steps": [
+                {"range": [0,  45], "color": "rgba(255,107,53,0.15)"},
+                {"range": [45, 55], "color": "rgba(136,136,136,0.1)"},
+                {"range": [55, 100],"color": "rgba(0,212,255,0.15)"},
+            ],
+            "threshold": {
+                "line": {"color": "white", "width": 2},
+                "thickness": 0.8,
+                "value": 50,
+            },
+        },
+    ))
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(t=60, b=10, l=20, r=20),
+        height=220,
+    )
+    return fig
+
+
+# ── Tabs ──────────────────────────────────────────────────────────────────────
+
+tab_chat, tab_predict, tab_backtest, tab_conseil = st.tabs(
+    ["💬 Chatbot", "🔮 Prédiction", "📊 Backtest", "💡 Conseil"]
+)
 
 # ── Onglet Chatbot ────────────────────────────────────────────────────────────
 with tab_chat:
@@ -60,63 +594,77 @@ with tab_chat:
                     st.session_state.messages.append({"role": "assistant", "content": err})
 
 
-# ── Onglet Prédiction ─────────────────────────────────────────────────────────
+# ── Onglet Prédiction (LSTM) ───────────────────────────────────────────────────
 with tab_predict:
-    st.subheader("Prédiction de direction")
-    st.caption("Interroge le modèle Prophet via le service de serving.")
+    st.subheader("Prédiction de marché — LSTM")
+    st.caption(
+        "Le modèle LSTM prédit la **probabilité de hausse** à J+1, J+7 et J+30. "
+        "Signal HAUSSE si prob > 55 %, BAISSE si < 45 %, NEUTRE sinon."
+    )
 
-    col1, col2, col3 = st.columns([2, 2, 1])
+    col1, col2 = st.columns([3, 1])
     with col1:
         ticker = st.selectbox(
             "Ticker",
             ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "SPY", "QQQ", "BTC-USD"],
+            key="pred_ticker_select",
         )
     with col2:
-        mode = st.radio("Horizon", ["daily", "monthly"], horizontal=True)
-    with col3:
         st.write("")
         st.write("")
-        predict_btn = st.button("Prédire", use_container_width=True)
+        predict_btn = st.button("🔍 Analyser", use_container_width=True, type="primary", key="pred_lstm_btn")
 
     if predict_btn:
-        with st.spinner("Appel au service de serving..."):
+        with st.spinner(f"Prédiction LSTM pour {ticker}…"):
             try:
                 resp = requests.post(
-                    f"{SERVING_URL}/predict",
-                    json={"ticker": ticker, "mode": mode},
+                    f"{SERVING_URL}/predict/lstm",
+                    json={"ticker": ticker},
                     timeout=30,
                 )
                 resp.raise_for_status()
                 data = resp.json()
-
-                direction = data["direction"]
-                preds     = data["predictions"]
-
-                if direction:
-                    st.success(f"Direction prévue : HAUSSE pour {ticker}")
-                else:
-                    st.error(f"Direction prévue : BAISSE pour {ticker}")
-
-                df_pred = pd.DataFrame(preds)
-                df_pred.columns = ["Date", "Prévision", "Borne basse", "Borne haute"]
-                st.dataframe(df_pred, use_container_width=True)
-
-                st.session_state["last_prediction"] = {
-                    "ticker":    ticker,
-                    "mode":      mode,
-                    "direction": direction,
-                    "predictions": preds,
+                st.session_state["last_lstm_prediction"] = {
+                    "ticker":     ticker,
+                    "prob_1d":    data.get("prob_up_1d",  0.5),
+                    "prob_7d":    data.get("prob_up_7d",  0.5),
+                    "prob_30d":   data.get("prob_up_30d", 0.5),
+                    "signal_1d":  data.get("signal_1d",  "—"),
+                    "signal_7d":  data.get("signal_7d",  "—"),
+                    "signal_30d": data.get("signal_30d", "—"),
                 }
-
             except requests.exceptions.ConnectionError:
-                st.error("Impossible de joindre le service serving (http://serving:8080). Est-il démarré ?")
+                st.error("❌ Impossible de joindre le service serving (http://serving:8080).")
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None and e.response.status_code == 404:
+                    st.warning(f"⚠️ Aucun modèle LSTM trouvé pour **{ticker}**. Lancez d'abord le DAG `lstm_training` dans Airflow.")
+                else:
+                    st.error(f"❌ Erreur API : {e}")
             except Exception as e:
-                st.error(f"Erreur : {e}")
+                st.error(f"❌ Erreur inattendue : {e}")
 
-    if "last_prediction" in st.session_state:
+    if "last_lstm_prediction" in st.session_state:
+        last = st.session_state["last_lstm_prediction"]
+        tk        = last["ticker"]
+        prob_1d   = last["prob_1d"]
+        prob_7d   = last["prob_7d"]
+        prob_30d  = last["prob_30d"]
+        sig_1d    = last["signal_1d"]
+        sig_7d    = last["signal_7d"]
+        sig_30d   = last["signal_30d"]
+
+        # ── Métriques ────────────────────────────────────────────────────────
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        with mc1:
+            st.metric("Ticker", tk)
+        with mc2:
+            st.metric("Signal J+1",  sig_1d,  f"{prob_1d*100:.1f}%")
+        with mc3:
+            st.metric("Signal J+7",  sig_7d,  f"{prob_7d*100:.1f}%")
+        with mc4:
+            st.metric("Signal J+30", sig_30d, f"{prob_30d*100:.1f}%")
+
         st.divider()
-        last = st.session_state["last_prediction"]
-        st.markdown(f"**Dernière prédiction** : `{last['ticker']}` — `{last['mode']}` — {'HAUSSE' if last['direction'] else 'BAISSE'}")
 
         # ── Jauges LSTM ───────────────────────────────────────────────────────
         gc1, gc2, gc3 = st.columns(3)

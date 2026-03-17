@@ -126,8 +126,6 @@ services:
       airflow scheduler
       "
 
-  streamlit:
-    image: python:3.11-slim
   # ─── Serving API ──────────────────────────────────────────────────────────────
 
   serving:
@@ -182,7 +180,7 @@ services:
     env_file:
       - .env
     environment:
-      - FEEDBACK_BASE_URL=http://localhost:8082
+      - FEEDBACK_BASE_URL=http://serving:8080
       - HMAC_SECRET=${HMAC_SECRET:-alphaops-secret-change-me}
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}

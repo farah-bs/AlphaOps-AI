@@ -9,4 +9,5 @@ sqlglot
 langchain-community
 langchain-core
 langchain-mistralai
-langgraph   
+langgraph
+plotly
