@@ -23,9 +23,9 @@ models_monthly: dict = {}
 price_stats:    dict = {}
 
 try:
-    RETRAIN_K = max(1, int(os.getenv("RETRAIN_K", "20")))
+    RETRAIN_NEG_K = max(1, int(os.getenv("RETRAIN_NEG_K", "10")))
 except ValueError:
-    RETRAIN_K = 20
+    RETRAIN_NEG_K = 10
 
 HMAC_SECRET = os.getenv("HMAC_SECRET", "alphaops-secret-change-me")
 if HMAC_SECRET == "alphaops-secret-change-me":
@@ -188,14 +188,16 @@ def feedback(req: FeedbackRequest):
             df_new.to_csv(prod_path, mode="a", header=False, index=False)
         else:
             df_new.to_csv(prod_path, mode="w", header=True, index=False)
-        n_prod = len(pd.read_csv(prod_path))
+        df_prod = pd.read_csv(prod_path)
+        n_prod  = len(df_prod)
+        n_neg   = int((df_prod["target"] != df_prod["prediction"]).sum())
 
     retrained = False
-    if n_prod % RETRAIN_K == 0:
+    if n_neg > 0 and n_neg % RETRAIN_NEG_K == 0:
         threading.Thread(target=_retrain_background, daemon=True).start()
         retrained = True
 
-    return {"status": "ok", "n_prod": n_prod, "retrained": retrained}
+    return {"status": "ok", "n_prod": n_prod, "n_neg": n_neg, "retrained": retrained}
 
 
 def _retrain_background():
@@ -290,10 +292,12 @@ def feedback_confirm(token: str, ticker: str, date: str, agreed: str, prediction
             df_new.to_csv(prod_path, mode="a", header=False, index=False)
         else:
             df_new.to_csv(prod_path, mode="w", header=True, index=False)
-        n_prod = len(pd.read_csv(prod_path))
+        df_prod = pd.read_csv(prod_path)
+        n_prod  = len(df_prod)
+        n_neg   = int((df_prod["target"] != df_prod["prediction"]).sum())
 
     retrained = False
-    if n_prod % RETRAIN_K == 0:
+    if n_neg > 0 and n_neg % RETRAIN_NEG_K == 0:
         threading.Thread(target=_retrain_background, daemon=True).start()
         retrained = True
 
