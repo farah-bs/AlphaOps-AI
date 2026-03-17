@@ -22,7 +22,6 @@ models_daily:   dict = {}
 models_monthly: dict = {}
 price_stats:    dict = {}
 
-TRAIN_END   = pd.Timestamp("2023-12-31")
 try:
     RETRAIN_K = max(1, int(os.getenv("RETRAIN_K", "20")))
 except ValueError:
@@ -108,7 +107,8 @@ def predict(req: PredictRequest):
 
     # Les `horizon` dernières lignes = prédictions futures
     preds          = forecast.tail(horizon)[["ds", "yhat", "yhat_lower", "yhat_upper"]]
-    last_known_y   = float(forecast.iloc[-(horizon + 1)]["yhat"])
+    # Use actual last known price from training history (not smoothed yhat)
+    last_known_y   = float(model.history["y"].iloc[-1])
 
     # ── Calcul prob_up ────────────────────────────────────────────────────────
     # Prophet génère des CI symétriques autour de yhat.
