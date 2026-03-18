@@ -180,8 +180,14 @@ def _build_sequences_lstm(
 
     for i in range(seq_len, len(scaled_X) - max_h + 1):
         X_list.append(scaled_X[i - seq_len : i])
-        ref     = raw_prices[i - 1]
-        targets = [int(raw_prices[i + h - 1] > ref) for h in horizons]
+        ref = raw_prices[i - 1]
+        # J+1 : lissé sur 3 jours pour réduire le bruit du signal quotidien
+        # J+7 et J+30 : direction classique (déjà stables)
+        targets = [
+            int(np.mean(raw_prices[i:i+3]) > ref) if h == 1
+            else int(raw_prices[i + h - 1] > ref)
+            for h in horizons
+        ]
         y_list.append(targets)
         date_list.append(dates[i - 1])
 
