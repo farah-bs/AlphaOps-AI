@@ -17,8 +17,10 @@ FEATURE_COLS = [
     "bb_pct",
     "atr_pct",
     "sma5_vs_sma20",
-    "spy_return",
 ]
+
+# spy_return est ajouté après compute_features dans prepare_data_lstm
+LSTM_FEATURE_COLS = FEATURE_COLS + ["spy_return"]
 
 # Tickers qui sont eux-mêmes le marché → spy_return = 0
 _MARKET_TICKERS = {"SPY", "QQQ"}
@@ -246,10 +248,10 @@ def prepare_data_lstm(
 
     # Scaler fit sur le train uniquement
     scaler = StandardScaler()
-    scaler.fit(train_df[FEATURE_COLS].values)
+    scaler.fit(train_df[LSTM_FEATURE_COLS].values)
 
     # Transformation de TOUTES les features (train + val + test)
-    X_all      = scaler.transform(df[FEATURE_COLS].values)
+    X_all      = scaler.transform(df[LSTM_FEATURE_COLS].values)
     prices_all = df["adj_close"].values
     dates_all  = df.index
 
@@ -261,7 +263,7 @@ def prepare_data_lstm(
     # Split par date du dernier élément de chaque séquence
     # Gap de seq_len jours entre train et val pour éviter l'overlap de features
     t_end      = pd.Timestamp(train_end)
-    val_start  = t_end + pd.Timedelta(days=seq_len)
+    val_start  = t_end + pd.Timedelta(days=120)
     v_end      = pd.Timestamp(val_end)
 
     train_mask = seq_dates <= t_end
