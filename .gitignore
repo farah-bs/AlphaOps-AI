@@ -58,9 +58,11 @@ artifacts/*.pickle
 artifacts/*.pkl
 artifacts/*.joblib
 artifacts/*.onnx
-artifacts/*.pt          # Modèles PyTorch (LSTM)
+artifacts/*.pt
 artifacts/backtest_*.csv
 artifacts/backtest_*.json
+artifacts/monitoring_summary_*.json
+artifacts/monitoring_reports/
 
 ########################################
 # MLFLOW
