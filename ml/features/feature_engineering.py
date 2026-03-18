@@ -17,7 +17,11 @@ FEATURE_COLS = [
     "bb_pct",
     "atr_pct",
     "sma5_vs_sma20",
+    "spy_return",
 ]
+
+# Tickers qui sont eux-mêmes le marché → spy_return = 0
+_MARKET_TICKERS = {"SPY", "QQQ"}
 
 
 def fetch_ohlcv(ticker: str, start_date: str = "2020-01-01") -> pd.DataFrame:
@@ -219,6 +223,17 @@ def prepare_data_lstm(
     """
     df = fetch_ohlcv(ticker)
     df = compute_features(df)
+
+    # ── spy_return : contexte macro du marché ─────────────────────────────────
+    if ticker.upper() in _MARKET_TICKERS:
+        df["spy_return"] = 0.0
+    else:
+        try:
+            spy_df = fetch_ohlcv("SPY")
+            spy_df = compute_features(spy_df)
+            df["spy_return"] = spy_df["log_return"].reindex(df.index).fillna(0.0)
+        except Exception:
+            df["spy_return"] = 0.0
 
     max_h     = max(horizons)
     train_df  = df[df.index <= train_end]
