@@ -20,9 +20,9 @@ def run_training():
 
 
 with DAG(
-    dag_id='model_training',
+    dag_id='prophet_entrainement',
     default_args=default_args,
-    description='Entraîne les modèles Prophet et sauvegarde les artifacts',
+    description='Entraîne les modèles FB Prophet (daily J+1 / monthly J+30) et sauvegarde les artifacts',
     start_date=datetime(2026, 2, 1),
     schedule_interval=None,
     catchup=False,

@@ -22,7 +22,7 @@ def run_lstm_training():
 
 
 with DAG(
-    dag_id='lstm_training',
+    dag_id='lstm_entrainement',
     default_args=default_args,
     description='Entraîne les modèles LSTM de direction (J+1, J+7, J+30)',
     start_date=datetime(2026, 2, 1),

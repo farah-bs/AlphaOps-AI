@@ -47,9 +47,9 @@ def run_monitoring_all():
 
 
 with DAG(
-    dag_id='model_monitoring',
+    dag_id='evidently_monitoring',
     default_args=default_args,
-    description='Monitoring automatisé — Evidently (qualité, drift, performance)',
+    description='Monitoring automatisé — Evidently (qualité, drift, performance) — lun–ven 18h',
     start_date=datetime(2026, 1, 1),
     schedule_interval='0 18 * * 1-5',   # lun–ven à 18h (après clôture marché)
     catchup=False,
