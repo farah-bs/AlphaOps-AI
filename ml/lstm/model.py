@@ -9,6 +9,7 @@ Prédit la probabilité que le prix soit en hausse à J+1, J+7 et J+30
 Architecture :
     Input  : (batch, seq_len=60, input_size=12)
     LSTM   : hidden=64, layers=2, dropout=0.2
+    Attention : weighted sum sur tous les timesteps
     Dense  : 64 → 32 (ReLU) → 3 logits
     Output : (batch, 3)  — logits pour [J+1, J+7, J+30]
 
@@ -38,6 +39,7 @@ def _get_model_class():
                 batch_first=True,
                 dropout=dropout if num_layers > 1 else 0.0,
             )
+            self.attn = nn.Linear(hidden_size, 1)
             self.head = nn.Sequential(
                 nn.Linear(hidden_size, 32),
                 nn.ReLU(),
@@ -48,8 +50,10 @@ def _get_model_class():
         def forward(self, x):
             # x : (batch, seq_len, input_size)
             lstm_out, _ = self.lstm(x)
-            last = lstm_out[:, -1, :]   # dernier timestep : (batch, hidden)
-            return self.head(last)      # logits : (batch, n_outputs)
+            # attention temporelle : apprend quels jours sont pertinents
+            attn_w = torch.softmax(self.attn(lstm_out), dim=1)  # (batch, seq, 1)
+            last = (lstm_out * attn_w).sum(dim=1)               # (batch, hidden)
+            return self.head(last)
 
     return LSTMDirectionModel
 
