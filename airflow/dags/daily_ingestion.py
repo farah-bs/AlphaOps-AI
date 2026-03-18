@@ -14,9 +14,9 @@ default_args = {
 }
 
 with DAG(
-    dag_id='daily_stock_ingestion',
+    dag_id='ingestion_journaliere',
     default_args=default_args,
-    description='Ingest daily stock data into the database',
+    description='Ingestion journalière des cours boursiers en DB — lun–ven 18h',
     start_date=datetime(2026, 2, 1),
     schedule_interval='0 18 * * 1-5',
     catchup=False,
