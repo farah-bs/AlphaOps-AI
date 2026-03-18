@@ -49,6 +49,9 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:5000:5000"
+    environment:
+      - MLFLOW_SERVER_ALLOWED_HOSTS=mlflow.khar.fi,127.0.0.1,localhost
+      - MLFLOW_SERVER_CORS_ALLOWED_ORIGINS=https://mlflow.khar.fi
     volumes:
       - ./mlruns:/mlruns
 
