@@ -11,9 +11,12 @@ FEATURE_COLS = [
     "return_mean_10", "return_std_10",
     "return_mean_20", "return_std_20",
     "rsi_14",
-    "macd_pct", "macd_signal_pct",   
+    "macd_pct", "macd_signal_pct",
     "volume_log_change",
     "volatility",
+    "bb_pct",
+    "atr_pct",
+    "sma5_vs_sma20",
 ]
 
 
@@ -61,6 +64,18 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["volume_log_change"] = np.log(df["volume"] / df["volume"].shift(1))
 
     # volatility column already present from fact_ohlcv
+
+    # Bollinger Bands — position du prix dans la bande (0=bas, 1=haut)
+    bb = ta.volatility.BollingerBands(close=close, window=20)
+    df["bb_pct"] = (close - bb.bollinger_lband()) / (bb.bollinger_hband() - bb.bollinger_lband() + 1e-9)
+
+    # ATR normalisé par le prix
+    df["atr_pct"] = ta.volatility.AverageTrueRange(
+        high=df["high_price"], low=df["low_price"], close=close, window=14
+    ).average_true_range() / close
+
+    # Crossover SMA5 vs SMA20
+    df["sma5_vs_sma20"] = close.rolling(5).mean() / close.rolling(20).mean() - 1
 
     df = df.dropna(subset=FEATURE_COLS)
     return df
