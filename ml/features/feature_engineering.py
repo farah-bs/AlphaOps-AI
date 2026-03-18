@@ -259,11 +259,13 @@ def prepare_data_lstm(
     )
 
     # Split par date du dernier élément de chaque séquence
-    t_end = pd.Timestamp(train_end)
-    v_end = pd.Timestamp(val_end)
+    # Gap de seq_len jours entre train et val pour éviter l'overlap de features
+    t_end      = pd.Timestamp(train_end)
+    val_start  = t_end + pd.Timedelta(days=seq_len)
+    v_end      = pd.Timestamp(val_end)
 
     train_mask = seq_dates <= t_end
-    val_mask   = (seq_dates > t_end) & (seq_dates <= v_end)
+    val_mask   = (seq_dates > val_start) & (seq_dates <= v_end)
     test_mask  = seq_dates > v_end
 
     return (

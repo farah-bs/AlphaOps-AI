@@ -67,7 +67,7 @@ class LSTMConfig:
     dropout:     float = 0.2
 
     # ── Séquences ─────────────────────────────────────────────────────────────
-    seq_len:   int         = 60              # fenêtre de 60 jours en entrée
+    seq_len:   int         = 120             # fenêtre de 120 jours en entrée
     horizons:  Tuple[int, ...] = (1, 7, 30) # horizons de prédiction (J+1, J+7, J+30)
 
     # ── Entraînement ──────────────────────────────────────────────────────────
