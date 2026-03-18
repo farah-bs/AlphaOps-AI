@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from scipy.stats import norm
 from typing import Literal
+from ml.features.feature_engineering import fetch_ohlcv, compute_features
 
 warnings.filterwarnings("ignore")
 
@@ -102,6 +103,16 @@ def predict(req: PredictRequest):
         days_since     = len(pd.bdate_range(since, today))
         days_to_extend = max(days_since + horizon, horizon)
         future         = model.make_future_dataframe(periods=days_to_extend, freq="B")
+
+    # Si le modèle a des extra regressors, forward-fill avec les dernières valeurs connues
+    if model.extra_regressors:
+        try:
+            df_feat   = compute_features(fetch_ohlcv(ticker))
+            last_vals = df_feat[list(model.extra_regressors.keys())].iloc[-1]
+            for col, val in last_vals.items():
+                future[col] = val
+        except Exception:
+            pass
 
     forecast = model.predict(future)
 

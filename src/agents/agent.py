@@ -10,8 +10,7 @@ import os
 from dotenv import load_dotenv
 import re
 from decimal import Decimal
-from datetime import date
-from src.db.connection import get_engine
+from datetime import datesrc.db.connection import get_engine
 
 load_dotenv()
 

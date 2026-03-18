@@ -15,7 +15,7 @@ ARTIFACTS = ROOT / "artifacts"
 ARTIFACTS.mkdir(exist_ok=True)
 
 
-def _to_prophet_df(df: pd.DataFrame) -> pd.DataFrame:
+def _to_prophet_df(df: pd.DataFrame, regressors: list = None) -> pd.DataFrame:
     """
     Converts a full OHLCV DataFrame (DatetimeIndex) to Prophet format (ds, y).
 
@@ -23,15 +23,27 @@ def _to_prophet_df(df: pd.DataFrame) -> pd.DataFrame:
     to correctly estimate trend, changepoints, and seasonality components.
     Fragmented/windowed input would create artificial discontinuities and
     degrade forecast quality.
+
+    If `regressors` is provided, adds those columns to the output df so that
+    Prophet can use them as extra regressors during training.
     """
-    prices = df["adj_close"].copy()
-    if "close_price" in df.columns:
-        prices = prices.fillna(df["close_price"])
-    prices = prices.replace([float("inf"), float("-inf")], float("nan")).dropna()
-    return pd.DataFrame({
-        "ds": pd.to_datetime(prices.index),
-        "y":  prices.values,
+    out = df.copy()
+    if "close_price" in out.columns:
+        out["adj_close"] = out["adj_close"].fillna(out["close_price"])
+    out["adj_close"] = out["adj_close"].replace([float("inf"), float("-inf")], float("nan"))
+    out = out.dropna(subset=["adj_close"])
+
+    result = pd.DataFrame({
+        "ds": pd.to_datetime(out.index),
+        "y":  out["adj_close"].values,
     }).reset_index(drop=True)
+
+    if regressors:
+        for reg in regressors:
+            if reg in out.columns:
+                result[reg] = out[reg].values
+
+    return result
 
 
 def _fit_prophet(df: pd.DataFrame, cfg: TrainingConfig = None) -> Prophet:
@@ -39,11 +51,13 @@ def _fit_prophet(df: pd.DataFrame, cfg: TrainingConfig = None) -> Prophet:
     Instancie et entraîne un modèle Prophet sur le DataFrame fourni.
 
     Paramètres clés pour la performance :
-        - n_changepoints réduit (15 vs 25 défaut) → fit ~30% plus rapide
-        - uncertainty_samples réduit (300 vs 1000 défaut) → predict 3× plus rapide
+        - n_changepoints=25 (défaut) → détecte plus de ruptures de tendance
+        - uncertainty_samples=1000 (défaut) → intervalles mieux estimés
     Pour la précision :
+        - changepoint_prior_scale=0.1 → plus réactif aux changements de direction
         - seasonality_prior_scale=1.0 (vs 10.0) → moins de sur-ajustement
         - seasonality_mode=multiplicative → variation en % stable pour les actifs
+        - extra_regressors : RSI, MACD, volatilité, log_return → signal directionnel
     """
     c = cfg or CFG
     m = Prophet(
@@ -57,6 +71,9 @@ def _fit_prophet(df: pd.DataFrame, cfg: TrainingConfig = None) -> Prophet:
         weekly_seasonality=c.weekly_seasonality,
         yearly_seasonality=c.yearly_seasonality,
     )
+    for reg in c.prophet_regressors:
+        if reg in df.columns:
+            m.add_regressor(reg)
     m.fit(df)
     return m
 
@@ -72,7 +89,7 @@ def _train_ticker(args: tuple) -> tuple:
     ticker, df_train, cfg = args
 
     # ── Daily model ────────────────────────────────────────────────────────
-    df_d    = _to_prophet_df(df_train)
+    df_d    = _to_prophet_df(df_train, regressors=cfg.prophet_regressors)
     print(f"  [{ticker}] daily   : {len(df_d):,} lignes (série continue)")
     model_d = _fit_prophet(df_d, cfg)
 

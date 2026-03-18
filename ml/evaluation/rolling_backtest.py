@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 from prophet import Prophet
 
-from ml.features.feature_engineering import fetch_ohlcv
+from ml.features.feature_engineering import fetch_ohlcv, compute_features
 from ml.training.config import TrainingConfig
 
 # Silencer les logs verbeux de Prophet/cmdstanpy
@@ -45,32 +45,38 @@ ARTIFACTS.mkdir(exist_ok=True)
 
 # ── Utilitaires ────────────────────────────────────────────────────────────────
 
-def _ohlcv_to_prophet_df(df: pd.DataFrame) -> pd.DataFrame:
+def _ohlcv_to_prophet_df(df: pd.DataFrame, regressors: list = None) -> pd.DataFrame:
     """
     Convertit un DataFrame OHLCV (DatetimeIndex) en format Prophet (ds, y).
 
     Priorité : adj_close → close_price (si adj_close contient des NaN).
     Supprime les valeurs infinies et NaN résiduelles.
+    Si `regressors` est fourni, ajoute ces colonnes au df résultant.
     """
-    prices = df["adj_close"].copy()
+    out = df.copy()
+    if "close_price" in out.columns:
+        out["adj_close"] = out["adj_close"].fillna(out["close_price"])
+    out["adj_close"] = out["adj_close"].replace([np.inf, -np.inf], np.nan)
+    out = out.dropna(subset=["adj_close"])
 
-    # Fallback si adj_close est manquant pour certaines lignes
-    if "close_price" in df.columns:
-        prices = prices.fillna(df["close_price"])
-
-    # Éliminer les valeurs aberrantes (inf, NaN)
-    prices = prices.replace([np.inf, -np.inf], np.nan).dropna()
-
-    return pd.DataFrame({
-        "ds": pd.to_datetime(prices.index),
-        "y":  prices.values,
+    result = pd.DataFrame({
+        "ds": pd.to_datetime(out.index),
+        "y":  out["adj_close"].values,
     }).reset_index(drop=True)
+
+    if regressors:
+        for reg in regressors:
+            if reg in out.columns:
+                result[reg] = out[reg].values
+
+    return result
 
 
 def _fit_prophet_model(train_df: pd.DataFrame, cfg: TrainingConfig) -> Prophet:
     """
     Instancie et entraîne un Prophet sur train_df (format ds, y)
     avec les hyperparamètres définis dans TrainingConfig.
+    Ajoute les extra regressors si présents dans train_df.
     """
     m = Prophet(
         n_changepoints=cfg.n_changepoints,
@@ -83,6 +89,9 @@ def _fit_prophet_model(train_df: pd.DataFrame, cfg: TrainingConfig) -> Prophet:
         weekly_seasonality=cfg.weekly_seasonality,
         yearly_seasonality=cfg.yearly_seasonality,
     )
+    for reg in cfg.prophet_regressors:
+        if reg in train_df.columns:
+            m.add_regressor(reg)
     m.fit(train_df)
     return m
 
@@ -124,7 +133,8 @@ def rolling_backtest_daily(
     if df_raw.empty:
         raise ValueError(f"Aucune donnée pour {ticker} dans fact_ohlcv.")
 
-    prophet_df = _ohlcv_to_prophet_df(df_raw)
+    df_raw     = compute_features(df_raw)
+    prophet_df = _ohlcv_to_prophet_df(df_raw, regressors=cfg.prophet_regressors)
     prophet_df = prophet_df.sort_values("ds").reset_index(drop=True)
 
     start_dt = pd.to_datetime(start_date)
@@ -169,9 +179,13 @@ def rolling_backtest_daily(
 
         # Entraîner + prédire J+1
         try:
-            model    = _fit_prophet_model(train_slice, cfg)
+            model  = _fit_prophet_model(train_slice, cfg)
             # freq="B" = jours ouvrés ; periods=1 = un seul jour après la dernière date connue
-            future   = model.make_future_dataframe(periods=1, freq="B")
+            future = model.make_future_dataframe(periods=1, freq="B")
+            # Forward-fill des regressors avec les dernières valeurs connues
+            for reg in cfg.prophet_regressors:
+                if reg in train_slice.columns:
+                    future[reg] = train_slice[reg].iloc[-1]
             forecast = model.predict(future)
 
             # La prédiction J+1 est toujours la dernière ligne du forecast

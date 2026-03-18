@@ -53,12 +53,12 @@ def retrain(cfg: TrainingConfig = CFG) -> dict:
             continue
 
         # Both models use full continuous time series (same as train.py)
-        df_prophet = _to_prophet_df(df_raw)
+        df_prophet = _to_prophet_df(df_raw, regressors=cfg.prophet_regressors)
         print(f"    daily   : {len(df_prophet):,} lignes (série continue)")
-        models_daily[ticker]   = _fit_prophet(df_prophet)
+        models_daily[ticker]   = _fit_prophet(df_prophet, cfg)
 
         print(f"    monthly : {len(df_prophet):,} lignes (série continue)")
-        models_monthly[ticker] = _fit_prophet(df_prophet)
+        models_monthly[ticker] = _fit_prophet(df_prophet, cfg)
 
     if not models_daily:
         raise RuntimeError("Aucun modèle réentraîné — la DB est-elle démarrée ?")
