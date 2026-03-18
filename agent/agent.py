@@ -25,7 +25,7 @@ llm = ChatMistralAI(
 )
 
 HMAC_SECRET   = os.getenv("HMAC_SECRET", "alphaops-secret-change-me")
-FEEDBACK_BASE = os.getenv("FEEDBACK_BASE_URL", "http://localhost:8082")
+FEEDBACK_BASE = os.getenv("FEEDBACK_BASE_URL", "http://localhost:8082").rstrip("/")
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
