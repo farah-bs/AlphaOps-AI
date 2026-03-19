@@ -61,7 +61,7 @@ class LSTMConfig:
     """Hyperparamètres pour le modèle LSTM de direction multi-horizon."""
 
     # ── Architecture ──────────────────────────────────────────────────────────
-    input_size:  int   = 16    # = len(FEATURE_COLS) dans feature_engineering.py
+    input_size:  int   = 16    # = len(LSTM_FEATURE_COLS) dans feature_engineering.py
     hidden_size: int   = 64
     num_layers:  int   = 2
     dropout:     float = 0.2
