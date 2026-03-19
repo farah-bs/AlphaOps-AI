@@ -19,19 +19,19 @@ improve a machine learning system in a real-world financial context.
 - Schema-grounded RAG
 - Secure SQL validation layer
 
-### 3️⃣ ML Forecasting Layer
+### 3️⃣ ML Forecasting Layer (✔️ Done)
 - LSTM time-series prediction model
 - Feature engineering (returns, volatility, rolling metrics)
 - Model versioning
 - Performance tracking
 
-### 4️⃣ MLOps & Monitoring
+### 4️⃣ MLOps & Monitoring (✔️ Done)
 - Model serving with FastAPI
 - User dashboard via Streamlit
 - Automated monitoring (performance, drift, quality) using Evidently
 - Metrics storage in PostgreSQL
 
-### 5️⃣ Autonomous AI Agent
+### 5️⃣ Autonomous AI Agent (✔️ Done)
 Orchestrated via n8n + LLM:
 - Sends automated email notifications
 - Explains model predictions
@@ -39,7 +39,7 @@ Orchestrated via n8n + LLM:
 - Analyzes feedback using an LLM
 - Triggers retraining when thresholds are reached
 
-### 6️⃣ Infrastructure
+### 6️⃣ Infrastructure (✔️ Done)
 - Fully containerized with Docker Compose
 - Modular microservices architecture
 - CI/CD ready structure
