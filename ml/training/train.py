@@ -1,7 +1,6 @@
 import pickle
 import warnings
 import itertools
-import numpy as np
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
