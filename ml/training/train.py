@@ -1,6 +1,8 @@
 import pickle
 import warnings
 import itertools
+import os
+import numpy as np
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -115,7 +117,10 @@ def _prophet_grid_search(df: pd.DataFrame, cfg: TrainingConfig, val_days: int = 
         acc    = _eval_prophet_direction(df_train, df_val, params, cfg.prophet_regressors)
         return params, acc
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    # Limite à 2 workers pour éviter la saturation CPU/RAM
+    # (train() lance déjà 4 tickers en parallèle → max 8 fits simultanés au total)
+    max_workers = max(1, min(2, os.cpu_count() or 2))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
         for params, acc in ex.map(_eval, combos):
             if acc > best_acc:
                 best_acc    = acc
