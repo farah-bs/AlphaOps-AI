@@ -148,12 +148,27 @@ def get_last_sequence(ticker: str, seq_len: int, scaler: StandardScaler) -> np.n
     """
     Fetch the most recent `seq_len` rows and return a scaled feature tensor
     ready for inference. Shape: (1, seq_len, n_features).
+
+    Uses LSTM_FEATURE_COLS (16 features incl. spy_return) to match the scaler
+    fitted during training. spy_return = 0 for market tickers (SPY/QQQ).
     """
     df = fetch_ohlcv(ticker)
     df = compute_features(df)
+
+    # Add spy_return — same logic as prepare_data_lstm
+    if ticker.upper() in _MARKET_TICKERS:
+        df["spy_return"] = 0.0
+    else:
+        try:
+            spy_df = fetch_ohlcv("SPY")
+            spy_df = compute_features(spy_df)
+            df["spy_return"] = spy_df["log_return"].reindex(df.index).fillna(0.0)
+        except Exception:
+            df["spy_return"] = 0.0
+
     if len(df) < seq_len:
         raise ValueError(f"Not enough rows for {ticker} (need {seq_len}, got {len(df)})")
-    recent = df.tail(seq_len)[FEATURE_COLS].values
+    recent = df.tail(seq_len)[LSTM_FEATURE_COLS].values
     scaled = scaler.transform(recent)
     return scaled[np.newaxis, :, :].astype(np.float32)  # (1, seq_len, n_features)
 
