@@ -11,10 +11,19 @@ FEATURE_COLS = [
     "return_mean_10", "return_std_10",
     "return_mean_20", "return_std_20",
     "rsi_14",
-    "macd_pct", "macd_signal_pct",   
+    "macd_pct", "macd_signal_pct",
     "volume_log_change",
     "volatility",
+    "bb_pct",
+    "atr_pct",
+    "sma5_vs_sma20",
 ]
+
+# spy_return est ajouté après compute_features dans prepare_data_lstm
+LSTM_FEATURE_COLS = FEATURE_COLS + ["spy_return"]
+
+# Tickers qui sont eux-mêmes le marché → spy_return = 0
+_MARKET_TICKERS = {"SPY", "QQQ"}
 
 
 def fetch_ohlcv(ticker: str, start_date: str = "2020-01-01") -> pd.DataFrame:
@@ -61,6 +70,18 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["volume_log_change"] = np.log(df["volume"] / df["volume"].shift(1))
 
     # volatility column already present from fact_ohlcv
+
+    # Bollinger Bands — position du prix dans la bande (0=bas, 1=haut)
+    bb = ta.volatility.BollingerBands(close=close, window=20)
+    df["bb_pct"] = (close - bb.bollinger_lband()) / (bb.bollinger_hband() - bb.bollinger_lband() + 1e-9)
+
+    # ATR normalisé par le prix
+    df["atr_pct"] = ta.volatility.AverageTrueRange(
+        high=df["high_price"], low=df["low_price"], close=close, window=14
+    ).average_true_range() / close
+
+    # Crossover SMA5 vs SMA20
+    df["sma5_vs_sma20"] = close.rolling(5).mean() / close.rolling(20).mean() - 1
 
     df = df.dropna(subset=FEATURE_COLS)
     return df
@@ -165,8 +186,14 @@ def _build_sequences_lstm(
 
     for i in range(seq_len, len(scaled_X) - max_h + 1):
         X_list.append(scaled_X[i - seq_len : i])
-        ref     = raw_prices[i - 1]
-        targets = [int(raw_prices[i + h - 1] > ref) for h in horizons]
+        ref = raw_prices[i - 1]
+        # J+1 : lissé sur 3 jours pour réduire le bruit du signal quotidien
+        # J+7 et J+30 : direction classique (déjà stables)
+        targets = [
+            int(np.mean(raw_prices[i:i+3]) > ref) if h == 1
+            else int(raw_prices[i + h - 1] > ref)
+            for h in horizons
+        ]
         y_list.append(targets)
         date_list.append(dates[i - 1])
 
@@ -199,6 +226,17 @@ def prepare_data_lstm(
     df = fetch_ohlcv(ticker)
     df = compute_features(df)
 
+    # ── spy_return : contexte macro du marché ─────────────────────────────────
+    if ticker.upper() in _MARKET_TICKERS:
+        df["spy_return"] = 0.0
+    else:
+        try:
+            spy_df = fetch_ohlcv("SPY")
+            spy_df = compute_features(spy_df)
+            df["spy_return"] = spy_df["log_return"].reindex(df.index).fillna(0.0)
+        except Exception:
+            df["spy_return"] = 0.0
+
     max_h     = max(horizons)
     train_df  = df[df.index <= train_end]
 
@@ -210,10 +248,10 @@ def prepare_data_lstm(
 
     # Scaler fit sur le train uniquement
     scaler = StandardScaler()
-    scaler.fit(train_df[FEATURE_COLS].values)
+    scaler.fit(train_df[LSTM_FEATURE_COLS].values)
 
     # Transformation de TOUTES les features (train + val + test)
-    X_all      = scaler.transform(df[FEATURE_COLS].values)
+    X_all      = scaler.transform(df[LSTM_FEATURE_COLS].values)
     prices_all = df["adj_close"].values
     dates_all  = df.index
 
@@ -223,11 +261,13 @@ def prepare_data_lstm(
     )
 
     # Split par date du dernier élément de chaque séquence
-    t_end = pd.Timestamp(train_end)
-    v_end = pd.Timestamp(val_end)
+    # Gap de seq_len jours entre train et val pour éviter l'overlap de features
+    t_end      = pd.Timestamp(train_end)
+    val_start  = t_end + pd.Timedelta(days=120)
+    v_end      = pd.Timestamp(val_end)
 
     train_mask = seq_dates <= t_end
-    val_mask   = (seq_dates > t_end) & (seq_dates <= v_end)
+    val_mask   = (seq_dates > val_start) & (seq_dates <= v_end)
     test_mask  = seq_dates > v_end
 
     return (

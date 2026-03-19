@@ -20,15 +20,22 @@ class TrainingConfig:
     monthly_horizon: int = 30
 
     # ── Prophet hyperparamètres ───────────────────────────────────────────────
-    n_changepoints:           int   = 15
-    uncertainty_samples:      int   = 300
-    interval_width:           float = 0.8
-    changepoint_prior_scale:  float = 0.05
+    n_changepoints:           int   = 25
+    uncertainty_samples:      int   = 1000
+    interval_width:           float = 0.95
+    changepoint_prior_scale:  float = 0.1
     seasonality_prior_scale:  float = 1.0
     seasonality_mode:         str   = "multiplicative"
     daily_seasonality:        bool  = False
     weekly_seasonality:       bool  = True
     yearly_seasonality:       bool  = True   # stocks have strong annual patterns
+
+    # Extra regressors — indicateurs techniques passés à Prophet
+    prophet_regressors: List[str] = field(
+        default_factory=lambda: [
+            "rsi_14", "macd_pct", "macd_signal_pct", "volatility", "log_return"
+        ]
+    )
 
     series_gap_days:   int = 30
     retrain_threshold: int = 50
@@ -54,13 +61,13 @@ class LSTMConfig:
     """Hyperparamètres pour le modèle LSTM de direction multi-horizon."""
 
     # ── Architecture ──────────────────────────────────────────────────────────
-    input_size:  int   = 12    # = len(FEATURE_COLS) dans feature_engineering.py
+    input_size:  int   = 16    # = len(LSTM_FEATURE_COLS) dans feature_engineering.py
     hidden_size: int   = 64
     num_layers:  int   = 2
     dropout:     float = 0.2
 
     # ── Séquences ─────────────────────────────────────────────────────────────
-    seq_len:   int         = 60              # fenêtre de 60 jours en entrée
+    seq_len:   int         = 120             # fenêtre de 120 jours en entrée
     horizons:  Tuple[int, ...] = (1, 7, 30) # horizons de prédiction (J+1, J+7, J+30)
 
     # ── Entraînement ──────────────────────────────────────────────────────────

@@ -1,5 +1,8 @@
 import pickle
 import warnings
+import itertools
+import os
+import numpy as np
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -9,13 +12,20 @@ from ml.training.config import TrainingConfig
 
 warnings.filterwarnings("ignore")
 
+PROPHET_GRID = {
+    "changepoint_prior_scale": [0.01, 0.05, 0.1, 0.3, 0.5],
+    "seasonality_prior_scale": [0.1, 1.0, 10.0],
+    "seasonality_mode":        ["additive", "multiplicative"],
+    "n_changepoints":          [15, 25, 40],
+}
+
 CFG       = TrainingConfig()
 ROOT      = Path(__file__).resolve().parent.parent.parent
 ARTIFACTS = ROOT / "artifacts"
 ARTIFACTS.mkdir(exist_ok=True)
 
 
-def _to_prophet_df(df: pd.DataFrame) -> pd.DataFrame:
+def _to_prophet_df(df: pd.DataFrame, regressors: list = None) -> pd.DataFrame:
     """
     Converts a full OHLCV DataFrame (DatetimeIndex) to Prophet format (ds, y).
 
@@ -23,15 +33,100 @@ def _to_prophet_df(df: pd.DataFrame) -> pd.DataFrame:
     to correctly estimate trend, changepoints, and seasonality components.
     Fragmented/windowed input would create artificial discontinuities and
     degrade forecast quality.
+
+    If `regressors` is provided, adds those columns to the output df so that
+    Prophet can use them as extra regressors during training.
     """
-    prices = df["adj_close"].copy()
-    if "close_price" in df.columns:
-        prices = prices.fillna(df["close_price"])
-    prices = prices.replace([float("inf"), float("-inf")], float("nan")).dropna()
-    return pd.DataFrame({
-        "ds": pd.to_datetime(prices.index),
-        "y":  prices.values,
+    out = df.copy()
+    if "close_price" in out.columns:
+        out["adj_close"] = out["adj_close"].fillna(out["close_price"])
+    out["adj_close"] = out["adj_close"].replace([float("inf"), float("-inf")], float("nan"))
+    out = out.dropna(subset=["adj_close"])
+
+    result = pd.DataFrame({
+        "ds": pd.to_datetime(out.index),
+        "y":  out["adj_close"].values,
     }).reset_index(drop=True)
+
+    if regressors:
+        for reg in regressors:
+            if reg in out.columns:
+                result[reg] = out[reg].values
+
+    return result
+
+
+def _eval_prophet_direction(df_train: pd.DataFrame, df_val: pd.DataFrame, params: dict, regressors: list) -> float:
+    """
+    Entraîne Prophet avec `params` sur df_train, prédit sur df_val,
+    retourne la direction accuracy (% de jours bien prédits).
+    """
+    try:
+        m = Prophet(
+            n_changepoints=params["n_changepoints"],
+            changepoint_prior_scale=params["changepoint_prior_scale"],
+            seasonality_prior_scale=params["seasonality_prior_scale"],
+            seasonality_mode=params["seasonality_mode"],
+            uncertainty_samples=0,  # rapide pour le grid search
+            daily_seasonality=False,
+            weekly_seasonality=True,
+            yearly_seasonality=True,
+        )
+        for reg in regressors:
+            if reg in df_train.columns:
+                m.add_regressor(reg)
+        m.fit(df_train)
+
+        future = m.make_future_dataframe(periods=len(df_val), freq="B")
+        for reg in regressors:
+            if reg in df_train.columns:
+                last_val = df_train[reg].iloc[-1]
+                future[reg] = last_val
+        forecast = m.predict(future)
+
+        pred_vals = forecast.tail(len(df_val))["yhat"].values
+        last_known = float(df_train["y"].iloc[-1])
+        actual_dir = (df_val["y"].values > last_known).astype(int)
+        pred_dir   = (pred_vals > last_known).astype(int)
+        return float((pred_dir == actual_dir).mean())
+    except Exception:
+        return 0.0
+
+
+def _prophet_grid_search(df: pd.DataFrame, cfg: TrainingConfig, val_days: int = 60) -> dict:
+    """
+    Grid search sur 90 combinaisons de hyperparamètres Prophet.
+    Utilise les `val_days` derniers jours comme set de validation rapide.
+    Retourne les meilleurs paramètres (dict).
+    """
+    split_idx = max(len(df) - val_days, int(len(df) * 0.8))
+    df_train  = df.iloc[:split_idx]
+    df_val    = df.iloc[split_idx:]
+
+    if len(df_val) < 5:
+        return {}  # pas assez de données pour évaluer
+
+    keys   = list(PROPHET_GRID.keys())
+    combos = list(itertools.product(*[PROPHET_GRID[k] for k in keys]))
+
+    best_acc    = -1.0
+    best_params = {}
+
+    def _eval(combo):
+        params = dict(zip(keys, combo))
+        acc    = _eval_prophet_direction(df_train, df_val, params, cfg.prophet_regressors)
+        return params, acc
+
+    # Limite à 2 workers pour éviter la saturation CPU/RAM
+    # (train() lance déjà 4 tickers en parallèle → max 8 fits simultanés au total)
+    max_workers = max(1, min(2, os.cpu_count() or 2))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for params, acc in ex.map(_eval, combos):
+            if acc > best_acc:
+                best_acc    = acc
+                best_params = params
+
+    return best_params
 
 
 def _fit_prophet(df: pd.DataFrame, cfg: TrainingConfig = None) -> Prophet:
@@ -39,11 +134,13 @@ def _fit_prophet(df: pd.DataFrame, cfg: TrainingConfig = None) -> Prophet:
     Instancie et entraîne un modèle Prophet sur le DataFrame fourni.
 
     Paramètres clés pour la performance :
-        - n_changepoints réduit (15 vs 25 défaut) → fit ~30% plus rapide
-        - uncertainty_samples réduit (300 vs 1000 défaut) → predict 3× plus rapide
+        - n_changepoints=25 (défaut) → détecte plus de ruptures de tendance
+        - uncertainty_samples=1000 (défaut) → intervalles mieux estimés
     Pour la précision :
+        - changepoint_prior_scale=0.1 → plus réactif aux changements de direction
         - seasonality_prior_scale=1.0 (vs 10.0) → moins de sur-ajustement
         - seasonality_mode=multiplicative → variation en % stable pour les actifs
+        - extra_regressors : RSI, MACD, volatilité, log_return → signal directionnel
     """
     c = cfg or CFG
     m = Prophet(
@@ -57,6 +154,9 @@ def _fit_prophet(df: pd.DataFrame, cfg: TrainingConfig = None) -> Prophet:
         weekly_seasonality=c.weekly_seasonality,
         yearly_seasonality=c.yearly_seasonality,
     )
+    for reg in c.prophet_regressors:
+        if reg in df.columns:
+            m.add_regressor(reg)
     m.fit(df)
     return m
 
@@ -71,14 +171,28 @@ def _train_ticker(args: tuple) -> tuple:
     """
     ticker, df_train, cfg = args
 
+    df_d = _to_prophet_df(df_train, regressors=cfg.prophet_regressors)
+
+    # ── Grid search hyperparamètres par ticker ──────────────────────────────
+    print(f"  [{ticker}] grid search (90 combos)...")
+    best_params = _prophet_grid_search(df_d, cfg, val_days=60)
+    if best_params:
+        import dataclasses
+        cfg = dataclasses.replace(
+            cfg,
+            changepoint_prior_scale = best_params.get("changepoint_prior_scale", cfg.changepoint_prior_scale),
+            seasonality_prior_scale = best_params.get("seasonality_prior_scale", cfg.seasonality_prior_scale),
+            seasonality_mode        = best_params.get("seasonality_mode",        cfg.seasonality_mode),
+            n_changepoints          = best_params.get("n_changepoints",          cfg.n_changepoints),
+        )
+        print(f"  [{ticker}] best params: {best_params}")
+
     # ── Daily model ────────────────────────────────────────────────────────
-    df_d    = _to_prophet_df(df_train)
     print(f"  [{ticker}] daily   : {len(df_d):,} lignes (série continue)")
     model_d = _fit_prophet(df_d, cfg)
 
     # ── Monthly model ──────────────────────────────────────────────────────
-    # Same full time series — Prophet uses all history for both horizons
-    df_m    = df_d.copy()
+    df_m = df_d.copy()
     print(f"  [{ticker}] monthly : {len(df_m):,} lignes (série continue)")
     model_m = _fit_prophet(df_m, cfg)
 

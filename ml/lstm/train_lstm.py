@@ -81,7 +81,15 @@ def train_lstm_ticker(ticker: str, cfg) -> dict:
         dropout=cfg.dropout,
         n_outputs=len(cfg.horizons),
     )
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    def focal_loss(logits, targets, gamma=2.0):
+        import torch.nn.functional as F
+        bce = F.binary_cross_entropy_with_logits(
+            logits, targets, pos_weight=pos_weight, reduction="none"
+        )
+        pt = torch.exp(-bce)
+        return ((1 - pt) ** gamma * bce).mean()
+
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5
@@ -101,7 +109,7 @@ def train_lstm_ticker(ticker: str, cfg) -> dict:
         train_loss = 0.0
         for xb, yb in train_loader:
             optimizer.zero_grad()
-            loss = criterion(model(xb), yb)
+            loss = focal_loss(model(xb), yb)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
@@ -115,7 +123,7 @@ def train_lstm_ticker(ticker: str, cfg) -> dict:
         with torch.no_grad():
             for xb, yb in val_loader:
                 logits = model(xb)
-                val_loss += criterion(logits, yb).item() * len(xb)
+                val_loss += focal_loss(logits, yb).item() * len(xb)
                 all_probs.append(torch.sigmoid(logits).numpy())
                 all_y.append(yb.numpy())
         val_loss /= len(X_val)
