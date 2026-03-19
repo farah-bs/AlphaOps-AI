@@ -170,6 +170,7 @@ def train_lstm_ticker(ticker: str, cfg) -> dict:
             "dropout":     cfg.dropout,
             "n_outputs":   len(cfg.horizons),
             "horizons":    list(cfg.horizons),
+            "seq_len":     cfg.seq_len,
         },
     }, pt_path)
 

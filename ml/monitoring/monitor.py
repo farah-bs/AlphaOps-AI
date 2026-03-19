@@ -26,17 +26,8 @@ _ROOT     = Path(__file__).resolve().parent.parent.parent
 ARTIFACTS = _ROOT / "artifacts"
 REPORTS   = ARTIFACTS / "monitoring_reports"
 
-# Features surveillées (identiques à feature_engineering.FEATURE_COLS)
-FEATURE_COLS = [
-    "log_return",
-    "return_mean_5",  "return_std_5",
-    "return_mean_10", "return_std_10",
-    "return_mean_20", "return_std_20",
-    "rsi_14",
-    "macd_pct", "macd_signal_pct",
-    "volume_log_change",
-    "volatility",
-]
+# Import depuis feature_engineering pour rester synchronisé automatiquement
+from ml.features.feature_engineering import FEATURE_COLS
 
 
 def _get_monitoring_windows():
