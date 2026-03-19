@@ -4,10 +4,10 @@ LSTMDirectionModel — AlphaOps AI
 Modèle LSTM pour la classification de direction multi-horizon.
 
 Prédit la probabilité que le prix soit en hausse à J+1, J+7 et J+30
-à partir d'une séquence de 60 jours de features techniques.
+à partir d'une séquence de plusieurs jours de features techniques.
 
-Architecture :
-    Input  : (batch, seq_len=60, input_size=12)
+Architecture (schématique) :
+    Input  : (batch, seq_len, input_size)
     LSTM   : hidden=64, layers=2, dropout=0.2
     Attention : weighted sum sur tous les timesteps
     Dense  : 64 → 32 (ReLU) → 3 logits
